@@ -1,33 +1,30 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import {
   doc,
   getDoc,
-  setDoc,
-  addDoc,
   collection,
   getDocs,
   query,
   orderBy,
   Timestamp,
   updateDoc,
+  addDoc,
   increment,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { useAccount, useReadContract } from 'wagmi';
-import { useParams, useRouter } from 'next/navigation';
 import toast, { Toaster } from 'react-hot-toast';
-import Image from 'next/image'; // ← Re-add Image import (line 909 error)
+import { useAccount, useReadContract, useDisconnect } from 'wagmi';
+import { useAppKit } from '@reown/appkit/react';
+import { useParams, useRouter } from 'next/navigation';
+import Image from 'next/image';
 import Loader from '@/components/Loader';
 import LikeButton from '@/components/LikeButton';
 import VoteButtons from '@/components/VoteButtons';
 import { monadTestnet } from '@reown/appkit/networks';
-import {
-  CONTRACT_ADDRESS,
-  contractAbi,
-} from '@/lib/constants';
+import { CONTRACT_ADDRESS, contractAbi } from '@/lib/constants';
 import { Campaign, Comment } from '@/lib/types';
 import {
   getRandomCatEmoji,
@@ -48,46 +45,52 @@ import {
 } from 'react-icons/fa';
 
 export default function CampaignDetail() {
+  // ─── Route parameter and normalization ───────────────────────────────────────
   const { id } = useParams();
+  const campaignId = Array.isArray(id) ? id[0] : id; // campaignId: string | undefined
   const { address, isConnected } = useAccount();
+  const { disconnect } = useDisconnect();
+  const { open } = useAppKit();
   const router = useRouter();
 
+  // ─── Local state ─────────────────────────────────────────────────────────────
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showFullDescription, setShowFullDescription] = useState(false);
 
-  // Track total likes and “is liking” state
-  const [totalLikes, setTotalLikes] = useState(0);
-  const [isLiking, setIsLiking] = useState(false);
-
-  // Re-use our Voting hook
+  // ─── Voting hook (on‐chain + Firestore) ─────────────────────────────────────
   const { handleVote, isPending: isVoting, votingPower } = useVote(
-    id as string,
+    campaignId || '',
     campaign?.contractProposalId || 0,
-    address
+    address || undefined
   );
 
   useFirebaseAuth();
 
-  // Build shareable link
+  // ─── Build a shareable URL ───────────────────────────────────────────────────
   const shareLink =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/campaign/${id}`
+      ? `${window.location.origin}/campaign/${campaignId}`
       : '';
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 1. FETCH Firestore data for this campaign (including total likes & vote status)
+  // 1. FETCH Firestore data for this campaign
   // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!campaignId) {
+      setError('Invalid campaign ID.');
+      setIsLoading(false);
+      return;
+    }
+
     async function fetchCampaignData() {
       setIsLoading(true);
 
       try {
-        // 1.a) Fetch the campaign document
-        const docRef = doc(db, 'campaigns', id as string);
+        // 1.a) Fetch the campaign document (use non‐null assertion here)
+        const docRef = doc(db, 'campaigns', campaignId!);
         const docSnap = await getDoc(docRef);
         if (!docSnap.exists()) {
           setError('Proposal not found.');
@@ -95,9 +98,11 @@ export default function CampaignDetail() {
           setIsLoading(false);
           return;
         }
-        const campData = docSnap.data() as any;
 
-        if (campData.deleted) {
+        // Cast into a generic record, then narrow each field
+        const rawData = docSnap.data() as Record<string, unknown>;
+
+        if (rawData.deleted === true) {
           setError('This campaign has been deleted.');
           toast.error('This campaign has been deleted.');
           setIsLoading(false);
@@ -105,46 +110,44 @@ export default function CampaignDetail() {
         }
 
         // 1.b) Fetch all “likes” for this campaign
-        const likesCol = collection(db, 'campaigns', id as string, 'likes');
+        const likesCol = collection(db, 'campaigns', campaignId!, 'likes');
         const likesSnap = await getDocs(likesCol);
 
-        // Determine if the **current user** has liked it
+        // Determine if the current user has already liked it
         const userFavourite = address
-          ? likesSnap.docs.some(
-              (d) => d.id === address.toLowerCase()
-            )
+          ? likesSnap.docs.some((d) => d.id === address.toLowerCase())
           : false;
 
-        // Set the **totalLikes** to the size of the likes snapshot
-        setTotalLikes(likesSnap.size);
-
-        // 1.c) Check if the **current user** has already voted (Firestore “votes” subcollection)
+        // 1.c) Check if the current user has already voted (Firestore “votes”)
         let userVote: 'yes' | 'no' | null = null;
         if (address) {
           const voteDocSnap = await getDoc(
-            doc(db, 'campaigns', id as string, 'votes', address.toLowerCase())
+            doc(db, 'campaigns', campaignId!, 'votes', address.toLowerCase())
           );
           if (voteDocSnap.exists()) {
-            userVote = voteDocSnap.data().vote as 'yes' | 'no';
+            const voteData = voteDocSnap.data() as Record<string, unknown>;
+            if (typeof voteData.vote === 'string') {
+              userVote = voteData.vote as 'yes' | 'no';
+            }
           }
         }
 
-        // 1.d) Fetch all comments
+        // 1.d) Fetch all comments, including their “likes”
         const commentsQuery = query(
-          collection(db, 'campaigns', id as string, 'comments'),
+          collection(db, 'campaigns', campaignId!, 'comments'),
           orderBy('timestamp', 'desc')
         );
         const commentsSnap = await getDocs(commentsQuery);
         const commentsData: Comment[] = await Promise.all(
           commentsSnap.docs.map(async (commentDoc) => {
             const commentId = commentDoc.id;
-            const commentData = commentDoc.data() as any;
+            const commentRaw = commentDoc.data() as Record<string, unknown>;
 
-            // For each comment, gather its “likes” subcollection
+            // Fetch “likes” subcollection for each comment
             const commentLikesCol = collection(
               db,
               'campaigns',
-              id as string,
+              campaignId!,
               'comments',
               commentId,
               'likes'
@@ -153,16 +156,24 @@ export default function CampaignDetail() {
             const likeCount = commentLikesSnap.size;
             const commentLikedByUser = address
               ? commentLikesSnap.docs.some(
-                  (likeDoc) =>
-                    likeDoc.id === address.toLowerCase()
+                  (likeDoc) => likeDoc.id === address.toLowerCase()
                 )
               : false;
 
             return {
               id: commentId,
-              text: commentData.text,
-              user: commentData.user,
-              timestamp: commentData.timestamp,
+              text:
+                typeof commentRaw.text === 'string'
+                  ? commentRaw.text
+                  : '',
+              user:
+                typeof commentRaw.user === 'string'
+                  ? commentRaw.user
+                  : 'unknown',
+              timestamp:
+                typeof commentRaw.timestamp === 'string'
+                  ? commentRaw.timestamp
+                  : new Date().toISOString(),
               likeCount,
               likedByUser: commentLikedByUser,
             } as Comment;
@@ -171,60 +182,85 @@ export default function CampaignDetail() {
 
         // 1.e) Normalize Firestore fields into our `Campaign` shape
         const date =
-          campData.date instanceof Timestamp
-            ? campData.date.toDate()
-            : new Date(campData.date || Date.now());
-        const proposalId = Number(campData.contractProposalId) || 0;
+          rawData.date instanceof Timestamp
+            ? rawData.date.toDate()
+            : new Date(
+                typeof rawData.date === 'string'
+                  ? rawData.date
+                  : Date.now()
+              );
 
-        const endDateStr = campData.endDate
-          ? campData.endDate instanceof Timestamp
-            ? campData.endDate.toDate().toISOString()
-            : (campData.endDate as string)
-          : null;
+        const proposalId =
+          typeof rawData.contractProposalId === 'number'
+            ? rawData.contractProposalId
+            : Number(rawData.contractProposalId) || 0;
 
-        // Determine on-chain status (“Live” if endDate > now)
+        const endDateStr =
+          rawData.endDate instanceof Timestamp
+            ? rawData.endDate.toDate().toISOString()
+            : typeof rawData.endDate === 'string'
+            ? rawData.endDate
+            : null;
+
+        // Determine on‐chain status (“Live” if endDate > now)
         let isLive = false;
         if (endDateStr) {
           isLive = new Date(endDateStr).getTime() > Date.now();
         }
 
-        // 1.f) Compute isVotable (on-chain “Live” && userVote is null && not invalid)
-        const isVotable =
-          isLive && !(campData.invalid as boolean) && userVote === null;
+        // 1.f) Compute isVotable (on‐chain “Live” && userVote is null && not invalid)
+        const invalidFlag = rawData.invalid === true;
+        const isVotable = isLive && !invalidFlag && userVote === null;
 
         setCampaign({
           id: docSnap.id,
-          author: (campData.author as string).toLowerCase(),
-          title: campData.title as string,
-          content: campData.content as string,
+          author:
+            typeof rawData.author === 'string'
+              ? rawData.author.toLowerCase()
+              : '',
+          title:
+            typeof rawData.title === 'string' ? rawData.title : '',
+          content:
+            typeof rawData.content === 'string' ? rawData.content : '',
           date: date.toISOString(),
-          image: (campData.image as string) || '/campaigns/placeholder.png',
-          yesVotes: (campData.yesVotes as number) || 0,
-          noVotes: (campData.noVotes as number) || 0,
-          abstainVotes: (campData.abstainVotes as number) || 0,
+          image:
+            typeof rawData.image === 'string'
+              ? rawData.image
+              : '/campaigns/placeholder.png',
+          yesVotes:
+            typeof rawData.yesVotes === 'number' ? rawData.yesVotes : 0,
+          noVotes:
+            typeof rawData.noVotes === 'number' ? rawData.noVotes : 0,
+          abstainVotes:
+            typeof rawData.abstainVotes === 'number'
+              ? rawData.abstainVotes
+              : 0,
           likedByUser: userFavourite,
-          votedByUser: userVote, // <─ populated from Firestore “votes”
+          votedByUser: userVote,
           contractProposalId: proposalId,
-          isVotable, // <─ computed above
+          isVotable,
           commentCount: commentsSnap.size,
-          allowAbstain: (campData.allowAbstain as boolean) || false,
+          allowAbstain:
+            rawData.allowAbstain === true ? true : false,
           status: isLive
             ? 'Live'
-            : (campData.status as
-                | 'Created'
-                | 'Active'
-                | 'Live'
-                | 'Approved'
-                | 'Ended'),
-          endDate: endDateStr,
+            : (['Created', 'Active', 'Live', 'Approved', 'Ended'] as const).includes(
+                rawData.status as unknown as Campaign['status']
+              )
+            ? (rawData.status as unknown as Campaign['status'])
+            : 'Created',
+          endDate: endDateStr ?? undefined,
           socialLinks:
-            (campData.socialLinks as {
-              twitter?: string
-              discord?: string
-              website?: string
-            }) || { twitter: '', discord: '', website: '' },
-          invalid: (campData.invalid as boolean) || false,
-          deleted: (campData.deleted as boolean) || false,
+            typeof rawData.socialLinks === 'object' &&
+            rawData.socialLinks !== null
+              ? (rawData.socialLinks as {
+                  twitter?: string;
+                  discord?: string;
+                  website?: string;
+                })
+              : { twitter: '', discord: '', website: '' },
+          invalid: invalidFlag,
+          deleted: false,
         });
 
         setComments(commentsData);
@@ -238,10 +274,10 @@ export default function CampaignDetail() {
     }
 
     fetchCampaignData();
-  }, [id, address]);
+  }, [campaignId, address]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 2. FETCH on-chain data and keep Firestore in sync (if needed)
+  // 2. FETCH on‐chain data and keep Firestore in sync (if needed)
   // ─────────────────────────────────────────────────────────────────────────────
   const { data: contractData, error: contractError } = useReadContract({
     address: CONTRACT_ADDRESS,
@@ -263,28 +299,35 @@ export default function CampaignDetail() {
   useEffect(() => {
     if (contractError) {
       console.error('Failed to fetch contract data:', contractError);
-      const errorMessage =
+
+      // Narrow out .message safely (no `as any`):
+      const errMsg =
         typeof contractError === 'object' &&
+        contractError !== null &&
         'message' in contractError &&
-        typeof (contractError as any).message === 'string'
-          ? ( (contractError as any).message as string ).includes('Invalid campaign ID')
-            ? 'Invalid campaign ID. This campaign does not exist on the blockchain.'
-            : 'Failed to fetch contract data.'
-          : 'Failed to fetch contract data.';
-      setError(errorMessage);
-      toast.error(errorMessage);
+        typeof (contractError as { message: unknown }).message === 'string'
+          ? (contractError as { message: string }).message
+          : '';
+
+      const message = errMsg.includes('Invalid campaign ID')
+        ? 'Invalid campaign ID. This campaign does not exist on‐chain.'
+        : 'Failed to fetch contract data.';
+
+      setError(message);
+      toast.error(message);
 
       if (
         campaign &&
-        typeof contractError === 'object' &&
-        'message' in contractError &&
-        (contractError as any).message.includes('Invalid campaign ID') &&
+        errMsg.includes('Invalid campaign ID') &&
         !campaign.invalid
       ) {
         // Mark Firestore doc as invalid
-        setDoc(doc(db, 'campaigns', campaign.id), { invalid: true }, { merge: true }).catch((err) => {
-          console.error('Failed to mark campaign as invalid:', err);
-        });
+        setDoc(
+          doc(db, 'campaigns', campaign.id),
+          { invalid: true },
+          { merge: true }
+        ).catch((e) => console.error('Failed to mark invalid:', e));
+
         setCampaign((prev) =>
           prev ? { ...prev, invalid: true, isVotable: false } : prev
         );
@@ -292,106 +335,97 @@ export default function CampaignDetail() {
       return;
     }
 
-    if (
-      contractData &&
-      campaign &&
-      !campaign.invalid &&
-      !campaign.deleted
-    ) {
-      // Narrow contractData as { yesVotes, noVotes, abstainVotes, status, endTime }
+    if (contractData && campaign && !campaign.invalid && !campaign.deleted) {
+      // Narrow contractData
+      const data = contractData as {
+        yesVotes: bigint;
+        noVotes: bigint;
+        abstainVotes: bigint;
+        status: bigint;
+        startTime: bigint;
+        endTime: bigint;
+        allowAbstain: boolean;
+        isDeleted: boolean;
+      };
+
+      const yesVotes = Number(data.yesVotes) || 0;
+      const noVotes = Number(data.noVotes) || 0;
+      const abstainVotes = Number(data.abstainVotes) || 0;
+
+      const statusMap = ['Created', 'Active', 'Live', 'Approved', 'Ended'] as const;
+      const onChainStatusIndex = Number(data.status);
+      const onChainStatus: Campaign['status'] =
+        statusMap[onChainStatusIndex] || 'Ended';
+
+      const onChainEndSec = Number(data.endTime);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const isStillLive =
+        onChainStatusIndex === 2 && onChainEndSec > nowSec;
+
+      const userAlreadyVoted = campaign.votedByUser !== null;
+
+      const updatedCampaign: Campaign = {
+        ...campaign,
+        yesVotes,
+        noVotes,
+        abstainVotes,
+        status: isStillLive ? 'Live' : onChainStatus,
+        endDate:
+          onChainEndSec > 0
+            ? new Date(onChainEndSec * 1000).toISOString()
+            : campaign.endDate ?? undefined,
+        isVotable: isStillLive && !campaign.invalid && !userAlreadyVoted,
+      };
+
+      // Only update Firestore + state if something changed
       if (
-        typeof contractData === 'object' &&
-        contractData !== null &&
-        'yesVotes' in contractData &&
-        'noVotes' in contractData &&
-        'abstainVotes' in contractData &&
-        'status' in contractData &&
-        'endTime' in contractData
+        campaign.yesVotes !== yesVotes ||
+        campaign.noVotes !== noVotes ||
+        campaign.abstainVotes !== abstainVotes ||
+        campaign.status !== updatedCampaign.status ||
+        campaign.isVotable !== updatedCampaign.isVotable
       ) {
-        const data = contractData as {
-          yesVotes: bigint;
-          noVotes: bigint;
-          abstainVotes: bigint;
-          status: bigint;
-          startTime: bigint;
-          endTime: bigint;
-          allowAbstain: boolean;
-          isDeleted: boolean;
-        };
+        setCampaign(updatedCampaign);
 
-        const yesVotes = Number(data.yesVotes) || 0;
-        const noVotes = Number(data.noVotes) || 0;
-        const abstainVotes = Number(data.abstainVotes) || 0;
-
-        const statusMap = [
-          'Created',
-          'Active',
-          'Live',
-          'Approved',
-          'Ended',
-        ] as const;
-        const onChainStatusIndex = Number(data.status);
-        const onChainStatus: Campaign['status'] =
-          statusMap[onChainStatusIndex] || 'Ended';
-
-        const onChainEndSec = Number(data.endTime);
-        const nowSec = Math.floor(Date.now() / 1000);
-        const isStillLive =
-          onChainStatusIndex === 2 && onChainEndSec > nowSec;
-
-        // Determine if user already has “voted” in Firestore (cached as campaign.votedByUser)
-        const userAlreadyVoted = campaign.votedByUser !== null;
-
-        const updatedCampaign: Campaign = {
-          ...campaign,
-          yesVotes,
-          noVotes,
-          abstainVotes,
-          status: isStillLive ? 'Live' : onChainStatus,
-          endDate:
-  onChainEndSec > 0
-    ? new Date(onChainEndSec * 1000).toISOString()
-    : campaign.endDate ?? undefined,
-
-          isVotable:
-            isStillLive && !campaign.invalid && !userAlreadyVoted,
-        };
-
-        // Only update state + Firestore if something changed
-        if (
-          campaign.yesVotes !== yesVotes ||
-          campaign.noVotes !== noVotes ||
-          campaign.abstainVotes !== abstainVotes ||
-          campaign.status !== updatedCampaign.status ||
-          campaign.isVotable !== updatedCampaign.isVotable
-        ) {
-          setCampaign(updatedCampaign);
-
-          setDoc(
-            doc(db, 'campaigns', campaign.id),
-            {
-              yesVotes,
-              noVotes,
-              abstainVotes,
-              status: updatedCampaign.status,
-              endDate:
-                onChainEndSec > 0
-                  ? Timestamp.fromDate(new Date(onChainEndSec * 1000))
-                  : null,
-              invalid: false,
-            },
-            { merge: true }
-          ).catch((err) => {
-            console.error('Failed to sync Firestore:', err);
-          });
-        }
+        setDoc(
+          doc(db, 'campaigns', campaign.id),
+          {
+            yesVotes,
+            noVotes,
+            abstainVotes,
+            status: updatedCampaign.status,
+            endDate:
+              onChainEndSec > 0
+                ? Timestamp.fromDate(new Date(onChainEndSec * 1000))
+                : null,
+            invalid: false,
+          },
+          { merge: true }
+        ).catch((e) => console.error('Failed to sync Firestore:', e));
       }
     }
   }, [contractData, contractError, campaign, address]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 3. HANDLE “Like” button clicks (optimistically update totalLikes + likedByUser)
+  // 3. HANDLE “Like” button clicks (optimistic + Firestore)
   // ─────────────────────────────────────────────────────────────────────────────
+  const [totalLikes, setTotalLikes] = useState(0);
+  const [isLiking, setIsLiking] = useState(false);
+
+  useEffect(() => {
+    // On initial load, set totalLikes = size of Firestore “likes” subcollection
+    if (!campaignId) return;
+    (async () => {
+      try {
+        const likesCol = collection(db, 'campaigns', campaignId!, 'likes');
+        const likesSnap = await getDocs(likesCol);
+        setTotalLikes(likesSnap.size);
+      } catch (e) {
+        console.error('Failed to fetch initial likes count:', e);
+      }
+    })();
+  }, [campaignId]);
+
   const handleLike = async () => {
     if (
       !isConnected ||
@@ -407,7 +441,7 @@ export default function CampaignDetail() {
     const likeRef = doc(
       db,
       'campaigns',
-      id as string,
+      campaignId!,
       'likes',
       address.toLowerCase()
     );
@@ -415,9 +449,7 @@ export default function CampaignDetail() {
       const likeSnap = await getDoc(likeRef);
       if (!likeSnap.exists()) {
         await setDoc(likeRef, { likedAt: new Date().toISOString() });
-        // Immediately bump totalLikes
         setTotalLikes((prev) => prev + 1);
-        // Mark that this user has liked
         setCampaign((prev) =>
           prev ? { ...prev, likedByUser: true } : prev
         );
@@ -431,19 +463,18 @@ export default function CampaignDetail() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // 4. HANDLE “Vote” clicks (optimistically disable Vote buttons on success)
+  // 4. HANDLE Vote clicks (optimistic)
   // ─────────────────────────────────────────────────────────────────────────────
   const onVote = useCallback(
     async (vote: 'yes' | 'no') => {
       if (!campaign) return;
       try {
         await handleVote(vote);
-        // As soon as on-chain vote is successful, disable voting here
         setCampaign((prev) =>
           prev ? { ...prev, votedByUser: vote, isVotable: false } : prev
         );
       } catch (err) {
-        console.error('Vote failed, not updating local state:', err);
+        console.error('Vote failed:', err);
       }
     },
     [campaign, handleVote]
@@ -468,16 +499,10 @@ export default function CampaignDetail() {
     );
   }
 
-  // Compute votes / like counts
+  // Compute vote stats
   const yesVotes = campaign.yesVotes;
   const noVotes = campaign.noVotes;
   const totalVotes = yesVotes + noVotes;
-
-  const descriptionPreviewLength = 200;
-  const needsShowMore = campaign.content.length > descriptionPreviewLength;
-  const descriptionPreview = needsShowMore
-    ? campaign.content.slice(0, descriptionPreviewLength) + '...'
-    : campaign.content;
 
   const statusStages: Campaign['status'][] = [
     'Created',
@@ -487,9 +512,9 @@ export default function CampaignDetail() {
     'Ended',
   ];
   const currentStatusIndex = statusStages.indexOf(campaign.status);
-  const isLive = campaign.endDate
-    ? new Date(campaign.endDate).getTime() > Date.now()
-    : false;
+  const isLive =
+    campaign.endDate &&
+    new Date(campaign.endDate).getTime() > Date.now();
 
   const campaignDate = new Date(campaign.date);
   const startDate = campaignDate.toLocaleDateString();
@@ -512,8 +537,9 @@ export default function CampaignDetail() {
         }}
       />
       <main className="flex-1 p-4 md:p-8 flex flex-col md:flex-row gap-4">
-        {/* ─────────── Left-side (Information & Status) ─────────── */}
+        {/* ─────────── Left Column (Info & Status) ─────────── */}
         <div className="w-full md:w-1/3 flex flex-col gap-4">
+          {/* Social Links */}
           <div className="flex justify-center space-x-6">
             {socialLinks.twitter && isValidUrl(socialLinks.twitter) && (
               <a
@@ -550,20 +576,19 @@ export default function CampaignDetail() {
             )}
           </div>
 
+          {/* Campaign Image */}
           <div className="relative w-full aspect-square">
             <Image
-  src={campaign.image ?? '/campaigns/placeholder.png'}
-  alt={campaign.title}
-  fill
-  sizes="(max-width: 768px) 100vw, 33vw"
-  className="object-cover rounded-md shadow-lg"
-  onError={(e) =>
-    (e.currentTarget.src = '/campaigns/placeholder.png')
-  }
-/>
-
+              src={campaign.image ?? '/campaigns/placeholder.png'}
+              alt={campaign.title}
+              fill
+              sizes="(max-width: 768px) 100vw, 33vw"
+              className="object-cover rounded-md shadow-lg"
+              onError={(e) => (e.currentTarget.src = '/campaigns/placeholder.png')}
+            />
           </div>
 
+          {/* Campaign Info Box */}
           <div className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300">
             <h3 className="text-lg font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-2">
               Campaign Information
@@ -588,6 +613,7 @@ export default function CampaignDetail() {
             </p>
           </div>
 
+          {/* Status Progress */}
           <div
             className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300 overflow-hidden"
             role="progressbar"
@@ -646,7 +672,7 @@ export default function CampaignDetail() {
                   <div className="absolute left-0 top-12 hidden group-hover:block bg-black/90 backdrop-blur-sm text-white text-xs p-2 rounded shadow-lg z-10 flex items-center space-x-2">
                     {stage === 'Live' ? <FaClock /> : <FaCheckCircle />}
                     <span>
-                      {{
+                      {({
                         Created: 'Proposal submitted',
                         Active: 'Proposal activated for voting',
                         Live: `Voting in progress${
@@ -658,7 +684,7 @@ export default function CampaignDetail() {
                         }`,
                         Approved: 'Proposal approved',
                         Ended: 'Proposal ended',
-                      }[stage]}
+                      } as Record<string, string>)[stage]}
                     </span>
                   </div>
                   {index < statusStages.length - 1 && (
@@ -670,11 +696,7 @@ export default function CampaignDetail() {
                     >
                       <path
                         d="M8 0 L8 28 L12 24 L8 32 L4 24 L8 28 Z"
-                        fill={
-                          index < currentStatusIndex
-                            ? '#34d399'
-                            : '#4b5563'
-                        }
+                        fill={index < currentStatusIndex ? '#34d399' : '#4b5563'}
                       />
                     </svg>
                   )}
@@ -684,17 +706,33 @@ export default function CampaignDetail() {
           </div>
         </div>
 
-        {/* ─────────── Right-side (Voting, Likes & Comments) ─────────── */}
+        {/* ─────────── Right Column (Voting, Likes, Comments) ─────────── */}
         <div className="flex-1 flex flex-col">
-          {/* If user is not connected, show “Back to Proposals” → Connect Wallet */}
-          {!isConnected ? (
+          {/* “Back to Proposals” + Connect/Disconnect */}
+          <div className="flex justify-between items-center mb-4">
             <button
               onClick={() => router.push('/')}
-              className={`${theme.colors.text.primary} hover:text-purple-300 text-sm mb-4`}
+              className={`${theme.colors.text.primary} hover:text-purple-300 text-sm`}
             >
               ← Back to Proposals
             </button>
-          ) : null}
+
+            {!isConnected ? (
+              <button
+                onClick={() => open()}
+                className={`bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} text-white px-4 py-2 rounded-full text-sm font-medium transition-transform transform hover:scale-105`}
+              >
+                Connect Wallet
+              </button>
+            ) : (
+              <button
+                onClick={() => disconnect()}
+                className={`bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 py-2 rounded-full text-sm font-medium transition-transform transform hover:scale-105`}
+              >
+                Disconnect Wallet
+              </button>
+            )}
+          </div>
 
           <div
             className={`${theme.bg.primary} rounded-xl border ${theme.border} ${theme.shadow} p-6 flex-1`}
@@ -737,26 +775,14 @@ export default function CampaignDetail() {
               <span className="absolute bottom-0 left-0 w-1/2 h-1 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-full" />
             </h2>
 
-            {/* Description Box */}
+            {/* Description (always full) */}
             <div className="p-6 rounded-lg bg-black/20 backdrop-blur-md border border-purple-900/50 hover:border-purple-500 transition-all duration-300 mb-4">
               <p className={`text-base ${theme.colors.text.secondary}`}>
-                {showFullDescription || !needsShowMore
-                  ? campaign.content
-                  : descriptionPreview}
+                {campaign.content}
               </p>
-              {needsShowMore && (
-                <button
-                  onClick={() =>
-                    setShowFullDescription((prev) => !prev)
-                  }
-                  className={`mt-2 px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} hover:scale-105 transition-all duration-300`}
-                >
-                  {showFullDescription ? 'Show Less' : 'Show More'}
-                </button>
-              )}
             </div>
 
-            {/* Voting Power Display */}
+            {/* Voting Power */}
             {isConnected && (
               <div className="bg-gray-900/70 rounded-lg p-4 text-center mb-4">
                 <h3
@@ -781,8 +807,8 @@ export default function CampaignDetail() {
                     : 'This campaign is invalid.'}
                 </p>
                 <p className="text-sm text-red-300 mt-2">
-                  This campaign does not exist on the blockchain or has
-                  been deleted. Please contact the admin.
+                  This campaign does not exist on‐chain or has been deleted.
+                  Please contact the admin.
                 </p>
               </div>
             )}
@@ -791,21 +817,21 @@ export default function CampaignDetail() {
             {!campaign.invalid && !campaign.deleted && (
               <div className="flex flex-col gap-4 mb-4">
                 <VoteButtons
-  campaignId={id as string}
-  isVotable={campaign.isVotable}
-  votedByUser={
-    campaign.votedByUser === 'abstain'
-      ? null
-      : (campaign.votedByUser as 'yes' | 'no' | null)
-  }
-  isVoting={isVoting}
-  onVote={onVote}
-/>
-
+                  campaignId={campaignId!}
+                  isVotable={campaign.isVotable}
+                  // if the stored vote is "abstain", treat it as `null`
+                  votedByUser={
+                    campaign.votedByUser === 'abstain'
+                      ? null
+                      : (campaign.votedByUser as 'yes' | 'no' | null)
+                  }
+                  isVoting={isVoting}
+                  onVote={onVote}
+                />
               </div>
             )}
 
-            {/* Like / Comment / Share Buttons */}
+            {/* Like / Comment / Share */}
             <div className="flex gap-4 mb-4">
               <LikeButton
                 likedByUser={campaign.likedByUser}
@@ -919,7 +945,7 @@ export default function CampaignDetail() {
                       collection(
                         db,
                         'campaigns',
-                        id as string,
+                        campaignId!,
                         'comments'
                       ),
                       {
@@ -929,7 +955,7 @@ export default function CampaignDetail() {
                       }
                     );
                     await updateDoc(
-                      doc(db, 'campaigns', id as string),
+                      doc(db, 'campaigns', campaignId!),
                       {
                         commentCount: increment(1),
                       }
@@ -1003,7 +1029,7 @@ export default function CampaignDetail() {
                             const likeRef = doc(
                               db,
                               'campaigns',
-                              id as string,
+                              campaignId!,
                               'comments',
                               comment.id,
                               'likes',
@@ -1052,9 +1078,7 @@ export default function CampaignDetail() {
                         </span>
                       </button>
                       <p className="text-xs text-gray-400">
-                        {new Date(
-                          comment.timestamp
-                        ).toLocaleString()}
+                        {new Date(comment.timestamp).toLocaleString()}
                       </p>
                     </div>
                   </div>

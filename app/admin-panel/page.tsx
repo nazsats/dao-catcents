@@ -29,7 +29,9 @@ import { Campaign } from '@/lib/types';
 import { shortenAddress, isValidUrl } from '@/lib/utils';
 import { theme } from '@/app/styles/theme';
 import { useFirebaseAuth } from '@/lib/hooks/useFirebaseAuth';
-import { FaClock, FaEdit, FaSync, FaTrash } from 'react-icons/fa';
+import { FaClock, FaEdit, FaSync, FaTrash, FaArrowLeft } from 'react-icons/fa';
+import { useAppKit } from '@reown/appkit/react';
+import { useRouter } from 'next/navigation';
 
 //
 // Define the on‐chain “Campaign” tuple shape returned by `contract.getCampaign(...)`.
@@ -51,6 +53,8 @@ export default function AdminPage() {
   // ─── Hooks & State ───────────────────────────────────────────────────────────
   const { address, isConnected } = useAccount();
   const { writeContract, isPending } = useWriteContract();
+  const { open } = useAppKit();
+  const router = useRouter();
 
   // 1) Read on‐chain campaignCount (refetch every 2 minutes)
   const { data: campaignCount, error: campaignCountError } = useReadContract({
@@ -195,10 +199,12 @@ export default function AdminPage() {
       toast.error('Title must be between 3 and 100 characters.');
       return false;
     }
-    if (form.description.length < 10 || form.description.length > 1000) {
-      toast.error('Description must be between 10 and 1000 characters.');
+    // Remove upper‐bound check on description; only enforce a minimum length:
+    if (form.description.length < 10) {
+      toast.error('Description must be at least 10 characters.');
       return false;
     }
+    // No longer enforcing `form.description.length <= 1000`
     if (
       imageFile &&
       !['image/jpeg', 'image/png', 'image/gif'].includes(imageFile.type)
@@ -510,7 +516,7 @@ export default function AdminPage() {
               );
               await provider.waitForTransaction(txHash);
 
-              const campaignRef = doc(db, 'campaigns', editingId);
+              const campaignRef = doc(db, 'campaigns', editingId!);
               const old = campaigns.find((c) => c.id === editingId) as Campaign;
               const updatedDataObj = {
                 author: address.toLowerCase(),
@@ -545,7 +551,7 @@ export default function AdminPage() {
                 prev.map((c) =>
                   c.id === editingId
                     ? ({
-                        id: editingId,
+                        id: editingId!,
                         author: updatedDataObj.author,
                         title: updatedDataObj.title,
                         content: updatedDataObj.content,
@@ -737,7 +743,24 @@ export default function AdminPage() {
   };
 
   // ─── Access Control: Only allow when connected to correct ADMIN_ADDRESS ─────
-  if (!isConnected || address?.toLowerCase() !== ADMIN_ADDRESS.toLowerCase()) {
+  if (!isConnected) {
+    // If not connected, show “Connect Wallet” button and prevent further actions
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
+        <div className="flex flex-col items-center space-y-4">
+          <p className="text-gray-200">Please connect your admin wallet to proceed.</p>
+          <button
+            onClick={() => open()}
+            className={`px-6 py-3 rounded-full text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} font-semibold`}
+          >
+            Connect Wallet
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (address?.toLowerCase() !== ADMIN_ADDRESS.toLowerCase()) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
         <p className="text-red-200">
@@ -770,6 +793,15 @@ export default function AdminPage() {
             Admin Panel
           </h1>
 
+          {/* ─── Back to Landing Page ───────────────────────────────────── */}
+          <button
+            onClick={() => router.push('/')}
+            className={`flex items-center space-x-2 text-sm mb-6 ${theme.colors.text.primary} hover:text-purple-300`}
+          >
+            <FaArrowLeft />
+            <span>Back to Proposals</span>
+          </button>
+
           {/* ─── Create / Edit Campaign Form ─────────────────────────────────── */}
           <div className="mb-8 p-6 rounded-xl bg-gray-900/70 border border-gray-700 shadow-lg">
             <h2 className="text-xl font-semibold mb-4">
@@ -793,7 +825,7 @@ export default function AdminPage() {
                 />
               </div>
 
-              {/* Description */}
+              {/* Description (no upper‐bound restriction) */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="description">
                   Description
@@ -804,7 +836,7 @@ export default function AdminPage() {
                   onChange={(e) => handleInputChange('description', e.target.value)}
                   className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
                   placeholder="Campaign description"
-                  rows={4}
+                  rows={6}
                   required
                   aria-required="true"
                 />
@@ -1031,3 +1063,4 @@ export default function AdminPage() {
     </div>
   );
 }
+

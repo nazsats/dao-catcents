@@ -39,6 +39,7 @@ export default function Home() {
     address,
     chainId: monadTestnet.id,
   });
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -107,33 +108,38 @@ export default function Home() {
               return null;
             }
 
-            // Check if user has liked
-            const likesCollection = collection(
-              db,
-              'campaigns',
-              campDoc.id,
-              'likes'
-            );
-            const likesSnap = await getDocs(likesCollection);
-            const userLiked = likesSnap.docs.some(
-              (d) => d.id === userAddress.toLowerCase()
-            );
+            // (A) Check if user has liked
+            let userLiked = false;
+            if (userAddress) {
+              const likesCollection = collection(
+                db,
+                'campaigns',
+                campDoc.id,
+                'likes'
+              );
+              const likesSnap = await getDocs(likesCollection);
+              userLiked = likesSnap.docs.some(
+                (d) => d.id === userAddress.toLowerCase()
+              );
+            }
 
-            // Check if user has voted
-            const voteDoc = await getDoc(
-              doc(
+            // (B) Check if user has voted
+            let userVote: 'yes' | 'no' | null = null;
+            if (userAddress) {
+              const voteDocRef = doc(
                 db,
                 'campaigns',
                 campDoc.id,
                 'votes',
                 userAddress.toLowerCase()
-              )
-            );
-            const userVote = voteDoc.exists()
-              ? voteDoc.data().vote
-              : null;
+              );
+              const voteDocSnap = await getDoc(voteDocRef);
+              if (voteDocSnap.exists()) {
+                userVote = voteDocSnap.data().vote as 'yes' | 'no';
+              }
+            }
 
-            // Count comments
+            // (C) Count comments
             const commentsCollection = collection(
               db,
               'campaigns',
@@ -143,7 +149,7 @@ export default function Home() {
             const commentsSnapshot = await getDocs(commentsCollection);
             const commentCount = commentsSnapshot.size;
 
-            // Normalize date
+            // (D) Normalize date
             const date =
               campData.date instanceof Timestamp
                 ? campData.date.toDate()
@@ -196,10 +202,12 @@ export default function Home() {
     }
 
     if (isConnecting) return;
+
+    // If wallet is connected, pass the real address; otherwise pass "" so sub‐collections skip that check
     if (address) {
       fetchCampaignsAndUserData(address);
     } else {
-      setIsLoading(false);
+      fetchCampaignsAndUserData('');
     }
   }, [address, isConnecting]);
 
@@ -249,6 +257,7 @@ export default function Home() {
         'likes',
         address.toLowerCase()
       );
+      // Use getDoc here (not getDocs) to fetch a single document
       const likeSnap = await getDoc(likeRef);
       if (!likeSnap.exists()) {
         await setDoc(likeRef, {
@@ -263,7 +272,6 @@ export default function Home() {
         );
         toast.success('Liked proposal!');
       } else {
-        // Already liked; just reset isLiking
         setCampaigns((prev) =>
           prev.map((camp, i) =>
             i === index ? { ...camp, isLiking: false } : camp
@@ -312,6 +320,57 @@ export default function Home() {
           },
         }}
       />
+
+      {/* ─────────── Top Header with Logo + Menu ─────────── */}
+      <header className="w-full bg-gray-900/80 backdrop-blur-md border-b border-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center h-16">
+            {/* Left side: Logo + menu */}
+            <div className="flex items-center space-x-8">
+              {/* Logo placeholder */}
+              <div className="flex-shrink-0">
+                <span className="text-2xl font-bold text-white">Catcents</span>
+              </div>
+
+              {/* Navigation items */}
+              <nav className="flex space-x-6">
+                {/* All menu items are “coming soon” → disabled */}
+                <button
+                  disabled
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  aria-label="Dashboard (coming soon)"
+                >
+                  Dashboard
+                </button>
+                <button
+                  disabled
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  aria-label="Trade (coming soon)"
+                >
+                  Trade
+                </button>
+                <button
+                  disabled
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  aria-label="Stake (coming soon)"
+                >
+                  Stake
+                </button>
+                <button
+                  disabled
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  aria-label="Vote (coming soon)"
+                >
+                  Vote
+                </button>
+              </nav>
+            </div>
+            {/* Right side: (optional empty space) */}
+            <div className="flex-1" />
+            {/* You can add right-aligned buttons here if needed */}
+          </div>
+        </div>
+      </header>
 
       {/* ─────────── Enhanced Hero Section ─────────── */}
       <section className="relative flex items-center justify-center h-[70vh] bg-gradient-to-br from-purple-900 to-indigo-800 overflow-hidden">
