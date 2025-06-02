@@ -8,7 +8,7 @@ import { headers } from 'next/headers';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'DAO App',
+  title: 'Demeowcracy Dao',
   description: 'Powered by Catcents and Monad',
 };
 
