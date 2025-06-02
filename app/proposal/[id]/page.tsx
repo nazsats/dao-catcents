@@ -1,3 +1,4 @@
+// File: app/proposal/[id]/page.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -44,53 +45,45 @@ import {
   FaClock,
 } from 'react-icons/fa';
 
-export default function CampaignDetail() {
-  // ─── Route parameter and normalization ───────────────────────────────────────
+export default function ProposalDetail() {
   const { id } = useParams();
-  const campaignId = Array.isArray(id) ? id[0] : id; // campaignId: string | undefined
+  const proposalId = Array.isArray(id) ? id[0] : id;
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { open } = useAppKit();
   const router = useRouter();
 
-  // ─── Local state ─────────────────────────────────────────────────────────────
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ─── Voting hook (on‐chain + Firestore) ─────────────────────────────────────
   const { handleVote, isPending: isVoting, votingPower } = useVote(
-    campaignId || '',
+    proposalId || '',
     campaign?.contractProposalId || 0,
     address || undefined
   );
 
   useFirebaseAuth();
 
-  // ─── Build a shareable URL ───────────────────────────────────────────────────
   const shareLink =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/campaign/${campaignId}`
+      ? `${window.location.origin}/proposal/${proposalId}`
       : '';
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 1. FETCH Firestore data for this campaign
-  // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!campaignId) {
-      setError('Invalid campaign ID.');
+    if (!proposalId) {
+      setError('Invalid proposal ID.');
       setIsLoading(false);
       return;
     }
 
-    async function fetchCampaignData() {
+    async function fetchProposalData() {
       setIsLoading(true);
 
       try {
-        // 1.a) Fetch the campaign document (use non‐null assertion here)
-        const docRef = doc(db, 'campaigns', campaignId!);
+        const docRef = doc(db, 'campaigns', proposalId!);
         const docSnap = await getDoc(docRef);
         if (!docSnap.exists()) {
           setError('Proposal not found.');
@@ -99,30 +92,26 @@ export default function CampaignDetail() {
           return;
         }
 
-        // Cast into a generic record, then narrow each field
         const rawData = docSnap.data() as Record<string, unknown>;
 
         if (rawData.deleted === true) {
-          setError('This campaign has been deleted.');
-          toast.error('This campaign has been deleted.');
+          setError('This proposal has been deleted.');
+          toast.error('This proposal has been deleted.');
           setIsLoading(false);
           return;
         }
 
-        // 1.b) Fetch all “likes” for this campaign
-        const likesCol = collection(db, 'campaigns', campaignId!, 'likes');
+        const likesCol = collection(db, 'campaigns', proposalId!, 'likes');
         const likesSnap = await getDocs(likesCol);
 
-        // Determine if the current user has already liked it
         const userFavourite = address
           ? likesSnap.docs.some((d) => d.id === address.toLowerCase())
           : false;
 
-        // 1.c) Check if the current user has already voted (Firestore “votes”)
         let userVote: 'yes' | 'no' | null = null;
         if (address) {
           const voteDocSnap = await getDoc(
-            doc(db, 'campaigns', campaignId!, 'votes', address.toLowerCase())
+            doc(db, 'campaigns', proposalId!, 'votes', address.toLowerCase())
           );
           if (voteDocSnap.exists()) {
             const voteData = voteDocSnap.data() as Record<string, unknown>;
@@ -132,9 +121,8 @@ export default function CampaignDetail() {
           }
         }
 
-        // 1.d) Fetch all comments, including their “likes”
         const commentsQuery = query(
-          collection(db, 'campaigns', campaignId!, 'comments'),
+          collection(db, 'campaigns', proposalId!, 'comments'),
           orderBy('timestamp', 'desc')
         );
         const commentsSnap = await getDocs(commentsQuery);
@@ -143,11 +131,10 @@ export default function CampaignDetail() {
             const commentId = commentDoc.id;
             const commentRaw = commentDoc.data() as Record<string, unknown>;
 
-            // Fetch “likes” subcollection for each comment
             const commentLikesCol = collection(
               db,
               'campaigns',
-              campaignId!,
+              proposalId!,
               'comments',
               commentId,
               'likes'
@@ -180,7 +167,6 @@ export default function CampaignDetail() {
           })
         );
 
-        // 1.e) Normalize Firestore fields into our `Campaign` shape
         const date =
           rawData.date instanceof Timestamp
             ? rawData.date.toDate()
@@ -190,7 +176,7 @@ export default function CampaignDetail() {
                   : Date.now()
               );
 
-        const proposalId =
+        const proposalIdNum =
           typeof rawData.contractProposalId === 'number'
             ? rawData.contractProposalId
             : Number(rawData.contractProposalId) || 0;
@@ -202,13 +188,11 @@ export default function CampaignDetail() {
             ? rawData.endDate
             : null;
 
-        // Determine on‐chain status (“Live” if endDate > now)
         let isLive = false;
         if (endDateStr) {
           isLive = new Date(endDateStr).getTime() > Date.now();
         }
 
-        // 1.f) Compute isVotable (on‐chain “Live” && userVote is null && not invalid)
         const invalidFlag = rawData.invalid === true;
         const isVotable = isLive && !invalidFlag && userVote === null;
 
@@ -237,7 +221,7 @@ export default function CampaignDetail() {
               : 0,
           likedByUser: userFavourite,
           votedByUser: userVote,
-          contractProposalId: proposalId,
+          contractProposalId: proposalIdNum,
           isVotable,
           commentCount: commentsSnap.size,
           allowAbstain:
@@ -265,20 +249,17 @@ export default function CampaignDetail() {
 
         setComments(commentsData);
       } catch (err) {
-        console.error('Failed to load campaign:', err);
-        setError('Failed to load campaign.');
-        toast.error('Failed to load campaign.');
+        console.error('Failed to load proposal:', err);
+        setError('Failed to load proposal.');
+        toast.error('Failed to load proposal.');
       } finally {
         setIsLoading(false);
       }
     }
 
-    fetchCampaignData();
-  }, [campaignId, address]);
+    fetchProposalData();
+  }, [proposalId, address]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. FETCH on‐chain data and keep Firestore in sync (if needed)
-  // ─────────────────────────────────────────────────────────────────────────────
   const { data: contractData, error: contractError } = useReadContract({
     address: CONTRACT_ADDRESS,
     abi: contractAbi,
@@ -300,7 +281,6 @@ export default function CampaignDetail() {
     if (contractError) {
       console.error('Failed to fetch contract data:', contractError);
 
-      // Narrow out .message safely (no `as any`):
       const errMsg =
         typeof contractError === 'object' &&
         contractError !== null &&
@@ -310,7 +290,7 @@ export default function CampaignDetail() {
           : '';
 
       const message = errMsg.includes('Invalid campaign ID')
-        ? 'Invalid campaign ID. This campaign does not exist on‐chain.'
+        ? 'Invalid proposal ID. This proposal does not exist on‐chain.'
         : 'Failed to fetch contract data.';
 
       setError(message);
@@ -321,7 +301,6 @@ export default function CampaignDetail() {
         errMsg.includes('Invalid campaign ID') &&
         !campaign.invalid
       ) {
-        // Mark Firestore doc as invalid
         setDoc(
           doc(db, 'campaigns', campaign.id),
           { invalid: true },
@@ -336,7 +315,6 @@ export default function CampaignDetail() {
     }
 
     if (contractData && campaign && !campaign.invalid && !campaign.deleted) {
-      // Narrow contractData
       const data = contractData as {
         yesVotes: bigint;
         noVotes: bigint;
@@ -377,7 +355,6 @@ export default function CampaignDetail() {
         isVotable: isStillLive && !campaign.invalid && !userAlreadyVoted,
       };
 
-      // Only update Firestore + state if something changed
       if (
         campaign.yesVotes !== yesVotes ||
         campaign.noVotes !== noVotes ||
@@ -406,25 +383,21 @@ export default function CampaignDetail() {
     }
   }, [contractData, contractError, campaign, address]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 3. HANDLE “Like” button clicks (optimistic + Firestore)
-  // ─────────────────────────────────────────────────────────────────────────────
   const [totalLikes, setTotalLikes] = useState(0);
   const [isLiking, setIsLiking] = useState(false);
 
   useEffect(() => {
-    // On initial load, set totalLikes = size of Firestore “likes” subcollection
-    if (!campaignId) return;
+    if (!proposalId) return;
     (async () => {
       try {
-        const likesCol = collection(db, 'campaigns', campaignId!, 'likes');
+        const likesCol = collection(db, 'campaigns', proposalId!, 'likes');
         const likesSnap = await getDocs(likesCol);
         setTotalLikes(likesSnap.size);
       } catch (e) {
         console.error('Failed to fetch initial likes count:', e);
       }
     })();
-  }, [campaignId]);
+  }, [proposalId]);
 
   const handleLike = async () => {
     if (
@@ -441,7 +414,7 @@ export default function CampaignDetail() {
     const likeRef = doc(
       db,
       'campaigns',
-      campaignId!,
+      proposalId!,
       'likes',
       address.toLowerCase()
     );
@@ -455,16 +428,13 @@ export default function CampaignDetail() {
         );
       }
     } catch (err) {
-      console.error('Failed to like campaign:', err);
-      toast.error('Failed to like campaign.');
+      console.error('Failed to like proposal:', err);
+      toast.error('Failed to like proposal.');
     } finally {
       setIsLiking(false);
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 4. HANDLE Vote clicks (optimistic)
-  // ─────────────────────────────────────────────────────────────────────────────
   const onVote = useCallback(
     async (vote: 'yes' | 'no') => {
       if (!campaign) return;
@@ -480,9 +450,6 @@ export default function CampaignDetail() {
     [campaign, handleVote]
   );
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 5. RENDER LOGIC
-  // ─────────────────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
@@ -499,7 +466,6 @@ export default function CampaignDetail() {
     );
   }
 
-  // Compute vote stats
   const yesVotes = campaign.yesVotes;
   const noVotes = campaign.noVotes;
   const totalVotes = yesVotes + noVotes;
@@ -537,9 +503,7 @@ export default function CampaignDetail() {
         }}
       />
       <main className="flex-1 p-4 md:p-8 flex flex-col md:flex-row gap-4">
-        {/* ─────────── Left Column (Info & Status) ─────────── */}
         <div className="w-full md:w-1/3 flex flex-col gap-4">
-          {/* Social Links */}
           <div className="flex justify-center space-x-6">
             {socialLinks.twitter && isValidUrl(socialLinks.twitter) && (
               <a
@@ -576,7 +540,6 @@ export default function CampaignDetail() {
             )}
           </div>
 
-          {/* Campaign Image */}
           <div className="relative w-full aspect-square">
             <Image
               src={campaign.image ?? '/campaigns/placeholder.png'}
@@ -588,10 +551,9 @@ export default function CampaignDetail() {
             />
           </div>
 
-          {/* Campaign Info Box */}
           <div className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300">
             <h3 className="text-lg font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-2">
-              Campaign Information
+              Proposal Information
             </h3>
             <p className={`text-sm ${theme.colors.text.secondary}`}>
               Created By:{' '}
@@ -613,7 +575,6 @@ export default function CampaignDetail() {
             </p>
           </div>
 
-          {/* Status Progress */}
           <div
             className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300 overflow-hidden"
             role="progressbar"
@@ -672,7 +633,7 @@ export default function CampaignDetail() {
                   <div className="absolute left-0 top-12 hidden group-hover:block bg-black/90 backdrop-blur-sm text-white text-xs p-2 rounded shadow-lg z-10 flex items-center space-x-2">
                     {stage === 'Live' ? <FaClock /> : <FaCheckCircle />}
                     <span>
-                      {({
+                      {{
                         Created: 'Proposal submitted',
                         Active: 'Proposal activated for voting',
                         Live: `Voting in progress${
@@ -684,7 +645,7 @@ export default function CampaignDetail() {
                         }`,
                         Approved: 'Proposal approved',
                         Ended: 'Proposal ended',
-                      } as Record<string, string>)[stage]}
+                      }[stage]}
                     </span>
                   </div>
                   {index < statusStages.length - 1 && (
@@ -706,9 +667,7 @@ export default function CampaignDetail() {
           </div>
         </div>
 
-        {/* ─────────── Right Column (Voting, Likes, Comments) ─────────── */}
         <div className="flex-1 flex flex-col">
-          {/* “Back to Proposals” + Connect/Disconnect */}
           <div className="flex justify-between items-center mb-4">
             <button
               onClick={() => router.push('/')}
@@ -737,7 +696,6 @@ export default function CampaignDetail() {
           <div
             className={`${theme.bg.primary} rounded-xl border ${theme.border} ${theme.shadow} p-6 flex-1`}
           >
-            {/* Header: Proposal ID & Author */}
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full flex items-center justify-center text-2xl">
@@ -767,7 +725,6 @@ export default function CampaignDetail() {
               </div>
             </div>
 
-            {/* Title */}
             <h2
               className={`text-2xl md:text-4xl font-bold ${theme.colors.text.primary} drop-shadow-md mb-2 relative`}
             >
@@ -775,14 +732,12 @@ export default function CampaignDetail() {
               <span className="absolute bottom-0 left-0 w-1/2 h-1 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-full" />
             </h2>
 
-            {/* Description (always full) */}
             <div className="p-6 rounded-lg bg-black/20 backdrop-blur-md border border-purple-900/50 hover:border-purple-500 transition-all duration-300 mb-4">
               <p className={`text-base ${theme.colors.text.secondary}`}>
                 {campaign.content}
               </p>
             </div>
 
-            {/* Voting Power */}
             {isConnected && (
               <div className="bg-gray-900/70 rounded-lg p-4 text-center mb-4">
                 <h3
@@ -798,28 +753,25 @@ export default function CampaignDetail() {
               </div>
             )}
 
-            {/* Invalid / Deleted notice */}
             {(campaign.invalid || campaign.deleted) && (
               <div className="bg-red-900/50 border border-red-700 p-4 rounded-lg mb-4">
                 <p className="text-red-200">
                   {campaign.deleted
-                    ? 'This campaign has been deleted.'
-                    : 'This campaign is invalid.'}
+                    ? 'This proposal has been deleted.'
+                    : 'This proposal is invalid.'}
                 </p>
                 <p className="text-sm text-red-300 mt-2">
-                  This campaign does not exist on‐chain or has been deleted.
+                  This proposal does not exist on‐chain or has been deleted.
                   Please contact the admin.
                 </p>
               </div>
             )}
 
-            {/* Vote Buttons */}
             {!campaign.invalid && !campaign.deleted && (
               <div className="flex flex-col gap-4 mb-4">
                 <VoteButtons
-                  campaignId={campaignId!}
+                  campaignId={proposalId!}
                   isVotable={campaign.isVotable}
-                  // if the stored vote is "abstain", treat it as `null`
                   votedByUser={
                     campaign.votedByUser === 'abstain'
                       ? null
@@ -831,7 +783,6 @@ export default function CampaignDetail() {
               </div>
             )}
 
-            {/* Like / Comment / Share */}
             <div className="flex gap-4 mb-4">
               <LikeButton
                 likedByUser={campaign.likedByUser}
@@ -867,7 +818,6 @@ export default function CampaignDetail() {
               </button>
             </div>
 
-            {/* Vote Progress Bars */}
             <div className="space-y-3 mb-4">
               <div>
                 <div className="flex justify-between text-xs text-gray-300 mb-1">
@@ -917,7 +867,6 @@ export default function CampaignDetail() {
               </div>
             </div>
 
-            {/* Comments Section */}
             <div>
               <h2 className={`text-xl font-bold ${theme.colors.text} mb-4`}>
                 Comments
@@ -945,7 +894,7 @@ export default function CampaignDetail() {
                       collection(
                         db,
                         'campaigns',
-                        campaignId!,
+                        proposalId!,
                         'comments'
                       ),
                       {
@@ -955,7 +904,7 @@ export default function CampaignDetail() {
                       }
                     );
                     await updateDoc(
-                      doc(db, 'campaigns', campaignId!),
+                      doc(db, 'campaigns', proposalId!),
                       {
                         commentCount: increment(1),
                       }
@@ -1029,7 +978,7 @@ export default function CampaignDetail() {
                             const likeRef = doc(
                               db,
                               'campaigns',
-                              campaignId!,
+                              proposalId!,
                               'comments',
                               comment.id,
                               'likes',

@@ -1,4 +1,4 @@
-// app/admin-panel/page.tsx
+// File: app/admin-panel/page.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -33,9 +33,6 @@ import { FaClock, FaEdit, FaSync, FaTrash, FaArrowLeft } from 'react-icons/fa';
 import { useAppKit } from '@reown/appkit/react';
 import { useRouter } from 'next/navigation';
 
-//
-// Define the on‐chain “Campaign” tuple shape returned by `contract.getCampaign(...)`.
-//
 interface OnChainCampaign {
   id: bigint;
   title: string;
@@ -50,13 +47,11 @@ interface OnChainCampaign {
 }
 
 export default function AdminPage() {
-  // ─── Hooks & State ───────────────────────────────────────────────────────────
   const { address, isConnected } = useAccount();
   const { writeContract, isPending } = useWriteContract();
   const { open } = useAppKit();
   const router = useRouter();
 
-  // 1) Read on‐chain campaignCount (refetch every 2 minutes)
   const { data: campaignCount, error: campaignCountError } = useReadContract({
     address: CONTRACT_ADDRESS as `0x${string}`,
     abi: contractAbi,
@@ -68,7 +63,6 @@ export default function AdminPage() {
     },
   });
 
-  // 2) Read on‐chain admin address
   const { data: contractAdmin } = useReadContract({
     address: CONTRACT_ADDRESS as `0x${string}`,
     abi: contractAbi,
@@ -94,7 +88,6 @@ export default function AdminPage() {
 
   useFirebaseAuth();
 
-  // ─── Warn if on‐chain admin ≠ ADMIN_ADDRESS ────────────────────────────────────
   useEffect(() => {
     if (
       typeof contractAdmin === 'string' &&
@@ -110,7 +103,6 @@ export default function AdminPage() {
     }
   }, [contractAdmin]);
 
-  // ─── If campaignCountError, show toast ───────────────────────────────────────
   useEffect(() => {
     if (campaignCountError) {
       console.error('Failed to fetch campaign count:', campaignCountError);
@@ -118,7 +110,6 @@ export default function AdminPage() {
     }
   }, [campaignCountError]);
 
-  // ─── Fetch Firestore campaigns (limit 50) ────────────────────────────────────
   useEffect(() => {
     async function fetchCampaigns() {
       setIsLoading(true);
@@ -186,7 +177,6 @@ export default function AdminPage() {
     fetchCampaigns();
   }, []);
 
-  // ─── Handlers ────────────────────────────────────────────────────────────────
   const handleInputChange = useCallback(
     (field: string, value: string | boolean) => {
       setForm((prev) => ({ ...prev, [field]: value }));
@@ -199,12 +189,10 @@ export default function AdminPage() {
       toast.error('Title must be between 3 and 100 characters.');
       return false;
     }
-    // Remove upper‐bound check on description; only enforce a minimum length:
     if (form.description.length < 10) {
       toast.error('Description must be at least 10 characters.');
       return false;
     }
-    // No longer enforcing `form.description.length <= 1000`
     if (
       imageFile &&
       !['image/jpeg', 'image/png', 'image/gif'].includes(imageFile.type)
@@ -266,7 +254,7 @@ export default function AdminPage() {
   };
 
   const handleDeleteCampaign = async (campaignId: string) => {
-    const pendingToast = toast.loading('Deleting campaign...');
+    const pendingToast = toast.loading('Deleting proposal...');
     try {
       await setDoc(
         doc(db, 'campaigns', campaignId),
@@ -275,15 +263,14 @@ export default function AdminPage() {
       );
       setCampaigns((prev) => prev.filter((c) => c.id !== campaignId));
       toast.dismiss(pendingToast);
-      toast.success('Campaign marked as deleted.');
+      toast.success('Proposal marked as deleted.');
     } catch (error: unknown) {
-      console.error('Failed to delete campaign:', error);
+      console.error('Failed to delete proposal:', error);
       toast.dismiss(pendingToast);
-      toast.error('Failed to delete campaign.');
+      toast.error('Failed to delete proposal.');
     }
   };
 
-  // ─── Create / Update Campaign ────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
@@ -299,10 +286,9 @@ export default function AdminPage() {
     if (!validateInputs()) return;
 
     const pendingToast = toast.loading(
-      editingId ? 'Updating campaign...' : 'Creating campaign...'
+      editingId ? 'Updating proposal...' : 'Creating proposal...'
     );
     try {
-      // 1) Possibly upload image
       let imageUrl = form.image;
       if (imageFile) {
         const formData = new FormData();
@@ -329,7 +315,6 @@ export default function AdminPage() {
         imageUrl = uploadedImageUrl;
       }
 
-      // 2) Compute durationSeconds
       let durationSeconds: number;
       if (form.endDate) {
         const endMS = new Date(form.endDate).getTime();
@@ -340,11 +325,10 @@ export default function AdminPage() {
         }
         durationSeconds = Math.floor((endMS - Date.now()) / 1000);
       } else {
-        durationSeconds = 7 * 24 * 60 * 60; // default 7 days
+        durationSeconds = 7 * 24 * 60 * 60;
       }
 
       if (!editingId) {
-        // ─── Create New Campaign ─────────────────────────────────────────────────
         await writeContract(
           {
             address: CONTRACT_ADDRESS as `0x${string}`,
@@ -355,13 +339,10 @@ export default function AdminPage() {
           },
           {
             onSuccess: async (txHash: `0x${string}`) => {
-              // Chain has created the new campaign at index (campaignCount – 1).
-              // We can skip calling readContract again—just reuse `campaignCount`.
               if (campaignCount !== undefined) {
                 try {
                   const newOnChainId = Number(campaignCount) - 1;
 
-                  // Write new document in Firestore
                   const newDocId = doc(collection(db, 'campaigns')).id;
                   const campaignDataObj = {
                     author: address.toLowerCase(),
@@ -389,7 +370,6 @@ export default function AdminPage() {
                   };
                   await setDoc(doc(db, 'campaigns', newDocId), campaignDataObj);
 
-                  // Insert into React state (convert endDate → ISO string)
                   setCampaigns((prev) => [
                     {
                       id: newDocId,
@@ -409,7 +389,6 @@ export default function AdminPage() {
                       socialLinks: campaignDataObj.socialLinks,
                       invalid: false,
                       deleted: false,
-                      // Required fields from Campaign interface:
                       likedByUser: false,
                       votedByUser: null,
                       isVotable: true,
@@ -417,7 +396,6 @@ export default function AdminPage() {
                     ...prev,
                   ]);
 
-                  // Reset form
                   setForm({
                     title: '',
                     description: '',
@@ -434,7 +412,7 @@ export default function AdminPage() {
                   toast.dismiss(pendingToast);
                   toast.success(
                     <div>
-                      Campaign created &amp; set live!{' '}
+                      Proposal created &amp; set live!{' '}
                       <a
                         href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
                         target="_blank"
@@ -449,19 +427,17 @@ export default function AdminPage() {
                 } catch (firestoreErr) {
                   console.error('Firestore write after createCampaign failed:', firestoreErr);
                   toast.dismiss(pendingToast);
-                  toast.error('Chain created the campaign but Firestore update failed.');
+                  toast.error('Chain created the proposal but Firestore update failed.');
                 }
               } else {
-                // campaignCount was undefined—in practice this rarely happens since the hook populates it,
-                // but we’ll handle it gracefully:
                 toast.dismiss(pendingToast);
-                toast.error('Chain created the campaign, but campaignCount is undefined.');
+                toast.error('Chain created the proposal, but campaignCount is undefined.');
               }
             },
             onError: (error: unknown) => {
               toast.dismiss(pendingToast);
-              console.error('Error creating campaign:', error);
-              let errorMessage = 'Failed to create campaign.';
+              console.error('Error creating proposal:', error);
+              let errorMessage = 'Failed to create proposal.';
               if (
                 error instanceof Error &&
                 error.message.includes('insufficient funds')
@@ -472,21 +448,20 @@ export default function AdminPage() {
                 error instanceof Error &&
                 error.message.includes('Only admin can access')
               ) {
-                errorMessage = 'Only the admin can create campaigns.';
+                errorMessage = 'Only the admin can create proposals.';
               } else if (
                 error instanceof Error &&
                 error.message.includes('User rejected the request')
               ) {
                 errorMessage = 'Transaction rejected by user.';
               } else if (error instanceof Error) {
-                errorMessage = `Failed to create campaign: ${error.message}`;
+                errorMessage = `Failed to create proposal: ${error.message}`;
               }
               toast.error(errorMessage, { duration: 5000 });
             },
           }
         );
       } else {
-        // ─── Update Existing Campaign ─────────────────────────────────────────────
         const statusEnum = {
           Created: 0,
           Active: 1,
@@ -510,7 +485,6 @@ export default function AdminPage() {
           },
           {
             onSuccess: async (txHash: `0x${string}`) => {
-              // Wait for the transaction to be mined, then update Firestore
               const provider = new JsonRpcProvider(
                 monadTestnet.rpcUrls.default.http[0]
               );
@@ -546,7 +520,6 @@ export default function AdminPage() {
               };
               await setDoc(campaignRef, updatedDataObj, { merge: true });
 
-              // Update React state (convert endDate → ISO string)
               setCampaigns((prev) =>
                 prev.map((c) =>
                   c.id === editingId
@@ -576,7 +549,6 @@ export default function AdminPage() {
                 )
               );
 
-              // Reset form
               setForm({
                 title: '',
                 description: '',
@@ -594,7 +566,7 @@ export default function AdminPage() {
               toast.dismiss(pendingToast);
               toast.success(
                 <div>
-                  Campaign updated!{' '}
+                  Proposal updated!{' '}
                   <a
                     href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
                     target="_blank"
@@ -609,8 +581,8 @@ export default function AdminPage() {
             },
             onError: (error: unknown) => {
               toast.dismiss(pendingToast);
-              console.error('Error updating campaign:', error);
-              let errorMessage = 'Failed to update campaign.';
+              console.error('Error updating proposal:', error);
+              let errorMessage = 'Failed to update proposal.';
               if (
                 error instanceof Error &&
                 error.message.includes('insufficient funds')
@@ -621,14 +593,14 @@ export default function AdminPage() {
                 error instanceof Error &&
                 error.message.includes('Only admin can access')
               ) {
-                errorMessage = 'Only the admin can update campaigns.';
+                errorMessage = 'Only the admin can update proposals.';
               } else if (
                 error instanceof Error &&
                 error.message.includes('User rejected the request')
               ) {
                 errorMessage = 'Transaction rejected by user.';
               } else if (error instanceof Error) {
-                errorMessage = `Failed to update campaign: ${error.message}`;
+                errorMessage = `Failed to update proposal: ${error.message}`;
               }
               toast.error(errorMessage, { duration: 5000 });
             },
@@ -637,10 +609,10 @@ export default function AdminPage() {
       }
     } catch (error: unknown) {
       toast.dismiss(pendingToast);
-      console.error('Error creating/updating campaign:', error);
+      console.error('Error creating/updating proposal:', error);
       const errMsg = error instanceof Error ? error.message : String(error);
       toast.error(
-        `Failed to ${editingId ? 'update' : 'create'} campaign: ${errMsg}`,
+        `Failed to ${editingId ? 'update' : 'create'} proposal: ${errMsg}`,
         {
           duration: 5000,
         }
@@ -648,19 +620,16 @@ export default function AdminPage() {
     }
   };
 
-  // ─── Sync Campaigns with Blockchain ─────────────────────────────────────────
   const handleSyncCampaigns = async () => {
-    const pendingToast = toast.loading('Syncing campaigns...');
+    const pendingToast = toast.loading('Syncing proposals...');
     try {
       const campQuery = query(collection(db, 'campaigns'));
       const campSnapshot = await getDocs(campQuery);
       const batch = writeBatch(db);
 
-      // 1) Read on-chain campaignCount (reuse the hook result)
       const currentCampaignCount =
         campaignCount !== undefined ? Number(campaignCount) : 0;
 
-      // 2) Instantiate a JsonRpcProvider & Contract once, then reuse:
       const provider = new JsonRpcProvider(monadTestnet.rpcUrls.default.http[0]);
       const contract = new Contract(CONTRACT_ADDRESS, contractAbi, provider);
 
@@ -679,19 +648,11 @@ export default function AdminPage() {
         }
 
         try {
-          // Call `getCampaign(proposalId)` on‐chain:
           const onChainRaw = (await contract.getCampaign(
             BigInt(proposalId)
           )) as OnChainCampaign;
 
-          const statusMap = [
-            'Created',
-            'Active',
-            'Live',
-            'Approved',
-            'Ended',
-            'Deleted',
-          ] as const;
+          const statusMap = ['Created', 'Active', 'Live', 'Approved', 'Ended', 'Deleted'] as const;
           const contractStatusIndex = Number(onChainRaw.status);
           const contractStatus = statusMap[contractStatusIndex] as Campaign['status'];
 
@@ -718,7 +679,7 @@ export default function AdminPage() {
             { merge: true }
           );
         } catch (error: unknown) {
-          console.error(`Failed to sync campaign ${campDoc.id}:`, error);
+          console.error(`Failed to sync proposal ${campDoc.id}:`, error);
           if (
             error instanceof Error &&
             error.message.includes('Invalid campaign ID')
@@ -734,17 +695,15 @@ export default function AdminPage() {
 
       await batch.commit();
       toast.dismiss(pendingToast);
-      toast.success('Campaigns synced successfully!');
+      toast.success('Proposals synced successfully!');
     } catch (error: unknown) {
-      console.error('Failed to sync campaigns:', error);
+      console.error('Failed to sync proposals:', error);
       toast.dismiss(pendingToast);
-      toast.error('Failed to sync campaigns.');
+      toast.error('Failed to sync proposals.');
     }
   };
 
-  // ─── Access Control: Only allow when connected to correct ADMIN_ADDRESS ─────
   if (!isConnected) {
-    // If not connected, show “Connect Wallet” button and prevent further actions
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
         <div className="flex flex-col items-center space-y-4">
@@ -770,7 +729,6 @@ export default function AdminPage() {
     );
   }
 
-  // ─── Loading Spinner ────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
@@ -793,7 +751,6 @@ export default function AdminPage() {
             Admin Panel
           </h1>
 
-          {/* ─── Back to Landing Page ───────────────────────────────────── */}
           <button
             onClick={() => router.push('/')}
             className={`flex items-center space-x-2 text-sm mb-6 ${theme.colors.text.primary} hover:text-purple-300`}
@@ -802,13 +759,11 @@ export default function AdminPage() {
             <span>Back to Proposals</span>
           </button>
 
-          {/* ─── Create / Edit Campaign Form ─────────────────────────────────── */}
           <div className="mb-8 p-6 rounded-xl bg-gray-900/70 border border-gray-700 shadow-lg">
             <h2 className="text-xl font-semibold mb-4">
-              {editingId ? 'Edit Campaign' : 'Create New Campaign'}
+              {editingId ? 'Edit Proposal' : 'Create New Proposal'}
             </h2>
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Title */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="title">
                   Title
@@ -819,13 +774,12 @@ export default function AdminPage() {
                   value={form.title}
                   onChange={(e) => handleInputChange('title', e.target.value)}
                   className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
-                  placeholder="Campaign title"
+                  placeholder="Proposal title"
                   required
                   aria-required="true"
                 />
               </div>
 
-              {/* Description (no upper‐bound restriction) */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="description">
                   Description
@@ -835,14 +789,13 @@ export default function AdminPage() {
                   value={form.description}
                   onChange={(e) => handleInputChange('description', e.target.value)}
                   className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
-                  placeholder="Campaign description"
+                  placeholder="Proposal description"
                   rows={6}
                   required
                   aria-required="true"
                 />
               </div>
 
-              {/* Image Upload */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="image">
                   Image
@@ -867,7 +820,6 @@ export default function AdminPage() {
                 )}
               </div>
 
-              {/* Allow Abstain */}
               <div className="flex items-center">
                 <input
                   id="allowAbstain"
@@ -881,7 +833,6 @@ export default function AdminPage() {
                 </label>
               </div>
 
-              {/* End Date */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="endDate">
                   End Date
@@ -895,7 +846,6 @@ export default function AdminPage() {
                 />
               </div>
 
-              {/* Status (only enabled when editing) */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="status">
                   Status
@@ -916,7 +866,6 @@ export default function AdminPage() {
                 </select>
               </div>
 
-              {/* Social Links */}
               <div>
                 <label className="block text-sm font-medium mb-1" htmlFor="twitter">
                   Twitter URL
@@ -957,7 +906,6 @@ export default function AdminPage() {
                 />
               </div>
 
-              {/* Submit Button */}
               <button
                 type="submit"
                 disabled={isPending}
@@ -966,30 +914,28 @@ export default function AdminPage() {
                   theme.colors.primary
                 } hover:bg-gradient-to-r hover:${theme.colors.secondary} disabled:bg-gray-600 disabled:cursor-not-allowed`}
               >
-                {editingId ? 'Update Campaign' : 'Create Campaign'}
+                {editingId ? 'Update Proposal' : 'Create Proposal'}
               </button>
             </form>
           </div>
 
-          {/* ─── Sync Button ─────────────────────────────────────────────────────── */}
           <div className="mb-6">
             <button
               onClick={handleSyncCampaigns}
               className={`px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${
                 theme.colors.primary
               } hover:bg-gradient-to-r hover:${theme.colors.secondary} flex items-center space-x-2`}
-              aria-label="Sync Campaigns with Blockchain"
+              aria-label="Sync Proposals with Blockchain"
             >
               <FaSync />
-              <span>Sync Campaigns with Blockchain</span>
+              <span>Sync Proposals with Blockchain</span>
             </button>
           </div>
 
-          {/* ─── Existing Campaigns List ─────────────────────────────────────────── */}
           <div>
-            <h2 className="text-xl font-semibold mb-4">Existing Campaigns</h2>
+            <h2 className="text-xl font-semibold mb-4">Existing Proposals</h2>
             {campaigns.length === 0 ? (
-              <p className="text-gray-400">No campaigns found.</p>
+              <p className="text-gray-400">No proposals found.</p>
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {campaigns.map((campaign) => {
@@ -1010,14 +956,14 @@ export default function AdminPage() {
                           <button
                             onClick={() => handleEdit(campaign)}
                             className="p-2 rounded-full bg-gray-800 hover:bg-gray-700"
-                            aria-label={`Edit campaign ${campaign.title}`}
+                            aria-label={`Edit proposal ${campaign.title}`}
                           >
                             <FaEdit className="text-cyan-400" />
                           </button>
                           <button
                             onClick={() => handleDeleteCampaign(campaign.id)}
                             className="p-2 rounded-full bg-gray-800 hover:bg-gray-700"
-                            aria-label={`Delete campaign ${campaign.title}`}
+                            aria-label={`Delete proposal ${campaign.title}`}
                           >
                             <FaTrash className="text-red-400" />
                           </button>
@@ -1063,4 +1009,3 @@ export default function AdminPage() {
     </div>
   );
 }
-

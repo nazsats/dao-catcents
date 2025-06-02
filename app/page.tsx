@@ -1,3 +1,4 @@
+// File: app/page.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
@@ -24,6 +25,7 @@ import {
 import type { Abi } from 'abitype';
 import { monadTestnet } from '@reown/appkit/networks';
 import { useAppKit } from '@reown/appkit/react';
+import Image from 'next/image';
 import CampaignCard from '@/components/CampaignCard';
 import Profile from '@/components/Profile';
 import Loader from '@/components/Loader';
@@ -46,7 +48,9 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const cardsPerPage = 20;
 
-  // Calculate integer voting power (no decimals)
+  // State for mobile menu toggle
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   const votingPower = balanceData
     ? Math.floor(Number(balanceData.formatted))
     : 0;
@@ -203,7 +207,6 @@ export default function Home() {
 
     if (isConnecting) return;
 
-    // If wallet is connected, pass the real address; otherwise pass "" so sub‐collections skip that check
     if (address) {
       fetchCampaignsAndUserData(address);
     } else {
@@ -215,13 +218,12 @@ export default function Home() {
   // 3. Fetch on-chain vote counts in batch (wagmi useReadContracts)
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // 3a) Cast our JSON ABI into the `Abi` type so TypeScript is happy
   const campaignAbi = contractAbi as unknown as Abi;
 
   const voteCountQueries = useMemo(
     () =>
       campaigns.map((campaign) => ({
-        address: CONTRACT_ADDRESS as `0x${string}`, // cast to literal
+        address: CONTRACT_ADDRESS as `0x${string}`,
         abi: campaignAbi,
         functionName: 'getVoteCount',
         args: [BigInt(campaign.contractProposalId)],
@@ -279,8 +281,8 @@ export default function Home() {
         );
       }
     } catch (error) {
-      console.error('Failed to like campaign:', error);
-      toast.error('Failed to like campaign.');
+      console.error('Failed to like proposal:', error);
+      toast.error('Failed to like proposal.');
       setCampaigns((prev) =>
         prev.map((camp, i) =>
           i === index ? { ...camp, isLiking: false } : camp
@@ -300,7 +302,6 @@ export default function Home() {
     );
   }
 
-  // Paginate
   const totalPages = Math.ceil(campaigns.length / cardsPerPage);
   const startIndex = (currentPage - 1) * cardsPerPage;
   const paginatedCampaigns = campaigns.slice(
@@ -324,51 +325,122 @@ export default function Home() {
       {/* ─────────── Top Header with Logo + Menu ─────────── */}
       <header className="w-full bg-gray-900/80 backdrop-blur-md border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center h-16">
-            {/* Left side: Logo + menu */}
-            <div className="flex items-center space-x-8">
-              {/* Logo placeholder */}
-              <div className="flex-shrink-0">
-                <span className="text-2xl font-bold text-white">Catcents</span>
-              </div>
+          <div className="flex items-center h-16 justify-between">
+            {/* Left side: Logo */}
+            <div className="flex items-center">
+              <Image
+                src="/logo.png"
+                alt="Logo"
+                width={80}
+                height={80}
+                className="object-contain"
+              />
+            </div>
 
-              {/* Navigation items */}
-              <nav className="flex space-x-6">
-                {/* All menu items are “coming soon” → disabled */}
+            {/* Desktop nav */}
+            <nav className="hidden md:flex space-x-6 ml-8">
+              <button
+                disabled
+                className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                aria-label="Dashboard (coming soon)"
+              >
+                Dashboard
+              </button>
+              <button
+                disabled
+                className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                aria-label="Trade (coming soon)"
+              >
+                Trade
+              </button>
+              <button
+                disabled
+                className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                aria-label="Stake (coming soon)"
+              >
+                Stake
+              </button>
+              <button
+                disabled
+                className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                aria-label="Vote (coming soon)"
+              >
+                Vote
+              </button>
+            </nav>
+
+            {/* Right side: empty spacer */}
+            <div className="flex-1"></div>
+
+            {/* Mobile menu button */}
+            <div className="md:hidden">
+              <button
+                onClick={() => setMobileMenuOpen((prev) => !prev)}
+                aria-label="Toggle menu"
+                className="p-2 text-gray-300 hover:text-white focus:outline-none"
+              >
+                {mobileMenuOpen ? (
+                  // X icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-6 w-6"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                ) : (
+                  // Hamburger icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-6 w-6"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile nav items */}
+          {mobileMenuOpen && (
+            <div className="md:hidden bg-gray-900/90">
+              <nav className="flex flex-col space-y-2 py-2 px-4">
                 <button
                   disabled
-                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-base font-medium text-left"
                   aria-label="Dashboard (coming soon)"
                 >
                   Dashboard
                 </button>
                 <button
                   disabled
-                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-base font-medium text-left"
                   aria-label="Trade (coming soon)"
                 >
                   Trade
                 </button>
                 <button
                   disabled
-                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-base font-medium text-left"
                   aria-label="Stake (coming soon)"
                 >
                   Stake
                 </button>
                 <button
                   disabled
-                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-sm font-medium"
+                  className="text-gray-400 hover:text-gray-300 cursor-not-allowed px-2 py-1 text-base font-medium text-left"
                   aria-label="Vote (coming soon)"
                 >
                   Vote
                 </button>
               </nav>
             </div>
-            {/* Right side: (optional empty space) */}
-            <div className="flex-1" />
-            {/* You can add right-aligned buttons here if needed */}
-          </div>
+          )}
         </div>
       </header>
 
@@ -413,7 +485,7 @@ export default function Home() {
                     onClick={() => disconnect()}
                     className={`bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 py-2 rounded-full font-semibold shadow-lg transition-transform transform hover:scale-105`}
                   >
-                    Disconnect
+                    Disconnect Wallet
                   </button>
                 </div>
                 {/* Voting Power Display */}
@@ -443,7 +515,6 @@ export default function Home() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {paginatedCampaigns.map((campaign) => {
-              // Cast result to [bigint, bigint] before indexing:
               const raw = voteCountsData?.[campaigns.indexOf(campaign)]?.result;
               const voteCounts = Array.isArray(raw)
                 ? (raw as [bigint, bigint])
