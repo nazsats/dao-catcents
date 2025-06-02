@@ -32,7 +32,7 @@ export default function CampaignCard({
   const likesCount = likedByUser ? 1 : 0;
   const shareLink =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/campaign/${id}`
+      ? `${window.location.origin}/proposal/${id}`
       : '';
 
   // Calculate percentages for progress bars
@@ -158,7 +158,7 @@ export default function CampaignCard({
             Share
           </button>
           <Link
-            href={`/campaign/${id}`}
+            href={`/proposal/${id}`}
             className={`block w-full px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} text-center transition-all duration-300`}
           >
             View Proposal
