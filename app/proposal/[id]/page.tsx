@@ -103,20 +103,21 @@ export default function ProposalDetail() {
 
         const likesCol = collection(db, 'campaigns', proposalId!, 'likes');
         const likesSnap = await getDocs(likesCol);
+        const likeCount = likesSnap.size; // Get likeCount from likes subcollection
 
         const userFavourite = address
           ? likesSnap.docs.some((d) => d.id === address.toLowerCase())
           : false;
 
-        let userVote: 'yes' | 'no' | null = null;
+        let userVote: 'yes' | 'no' | 'abstain' | null = null;
         if (address) {
           const voteDocSnap = await getDoc(
             doc(db, 'campaigns', proposalId!, 'votes', address.toLowerCase())
           );
           if (voteDocSnap.exists()) {
             const voteData = voteDocSnap.data() as Record<string, unknown>;
-            if (typeof voteData.vote === 'string') {
-              userVote = voteData.vote as 'yes' | 'no';
+            if (['yes', 'no', 'abstain'].includes(voteData.vote as string)) {
+              userVote = voteData.vote as 'yes' | 'no' | 'abstain';
             }
           }
         }
@@ -140,7 +141,7 @@ export default function ProposalDetail() {
               'likes'
             );
             const commentLikesSnap = await getDocs(commentLikesCol);
-            const likeCount = commentLikesSnap.size;
+            const commentLikeCount = commentLikesSnap.size;
             const commentLikedByUser = address
               ? commentLikesSnap.docs.some(
                   (likeDoc) => likeDoc.id === address.toLowerCase()
@@ -161,7 +162,7 @@ export default function ProposalDetail() {
                 typeof commentRaw.timestamp === 'string'
                   ? commentRaw.timestamp
                   : new Date().toISOString(),
-              likeCount,
+              likeCount: commentLikeCount,
               likedByUser: commentLikedByUser,
             } as Comment;
           })
@@ -186,7 +187,7 @@ export default function ProposalDetail() {
             ? rawData.endDate.toDate().toISOString()
             : typeof rawData.endDate === 'string'
             ? rawData.endDate
-            : null;
+            : undefined;
 
         let isLive = false;
         if (endDateStr) {
@@ -196,7 +197,7 @@ export default function ProposalDetail() {
         const invalidFlag = rawData.invalid === true;
         const isVotable = isLive && !invalidFlag && userVote === null;
 
-        setCampaign({
+        const campaignData: Campaign = {
           id: docSnap.id,
           author:
             typeof rawData.author === 'string'
@@ -224,16 +225,16 @@ export default function ProposalDetail() {
           contractProposalId: proposalIdNum,
           isVotable,
           commentCount: commentsSnap.size,
-          allowAbstain:
-            rawData.allowAbstain === true ? true : false,
+          likeCount, // Added likeCount
+          allowAbstain: rawData.allowAbstain === true,
           status: isLive
             ? 'Live'
             : (['Created', 'Active', 'Live', 'Approved', 'Ended'] as const).includes(
                 rawData.status as unknown as Campaign['status']
               )
-            ? (rawData.status as unknown as Campaign['status'])
+            ? (rawData.status as Campaign['status'])
             : 'Created',
-          endDate: endDateStr ?? undefined,
+          endDate: endDateStr,
           socialLinks:
             typeof rawData.socialLinks === 'object' &&
             rawData.socialLinks !== null
@@ -245,8 +246,11 @@ export default function ProposalDetail() {
               : { twitter: '', discord: '', website: '' },
           invalid: invalidFlag,
           deleted: false,
-        });
+        };
 
+        console.log('Fetched campaign:', campaignData.id, 'likeCount:', campaignData.likeCount); // Debug
+
+        setCampaign(campaignData);
         setComments(commentsData);
       } catch (err) {
         console.error('Failed to load proposal:', err);
@@ -381,7 +385,7 @@ export default function ProposalDetail() {
         ).catch((e) => console.error('Failed to sync Firestore:', e));
       }
     }
-  }, [contractData, contractError, campaign, address]);
+  }, [contractData, contractError, campaign]);
 
   const [totalLikes, setTotalLikes] = useState(0);
   const [isLiking, setIsLiking] = useState(false);
@@ -424,7 +428,7 @@ export default function ProposalDetail() {
         await setDoc(likeRef, { likedAt: new Date().toISOString() });
         setTotalLikes((prev) => prev + 1);
         setCampaign((prev) =>
-          prev ? { ...prev, likedByUser: true } : prev
+          prev ? { ...prev, likedByUser: true, likeCount: prev.likeCount + 1 } : prev
         );
       }
     } catch (err) {
@@ -495,543 +499,552 @@ export default function ProposalDetail() {
   };
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-black to-purple-950 text-white">
+    <div className="flex min-h-screen bg-gradient-to-br from-black to-purple-950 text-white overflow-x-hidden">
       <Toaster
         position="top-right"
         toastOptions={{
           style: { background: '#1a1a1a', color: '#fff', border: '1px solid #fff' },
         }}
       />
-      <main className="flex-1 p-4 md:p-8 flex flex-col md:flex-row gap-4">
-        <div className="w-full md:w-1/3 flex flex-col gap-4">
-          <div className="flex justify-center space-x-6">
-            {socialLinks.twitter && isValidUrl(socialLinks.twitter) && (
-              <a
-                href={socialLinks.twitter}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
-                aria-label="X Profile"
-              >
-                <FaTwitter />
-              </a>
-            )}
-            {socialLinks.discord && isValidUrl(socialLinks.discord) && (
-              <a
-                href={socialLinks.discord}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
-                aria-label="Discord Server"
-              >
-                <FaDiscord />
-              </a>
-            )}
-            {socialLinks.website && isValidUrl(socialLinks.website) && (
-              <a
-                href={socialLinks.website}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
-                aria-label="Website"
-              >
-                <FaGlobe />
-              </a>
-            )}
-          </div>
-
-          <div className="relative w-full aspect-square">
-            <Image
-              src={campaign.image ?? '/campaigns/placeholder.png'}
-              alt={campaign.title}
-              fill
-              sizes="(max-width: 768px) 100vw, 33vw"
-              className="object-cover rounded-md shadow-lg"
-              onError={(e) => (e.currentTarget.src = '/campaigns/placeholder.png')}
-            />
-          </div>
-
-          <div className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300">
-            <h3 className="text-lg font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-2">
-              Proposal Information
-            </h3>
-            <p className={`text-sm ${theme.colors.text.secondary}`}>
-              Created By:{' '}
-              <span className={`font-bold ${theme.colors.text.accent}`}>
-                {shortenAddress(campaign.author)}
-              </span>
-            </p>
-            <p className={`text-sm ${theme.colors.text.secondary}`}>
-              Start Date:{' '}
-              <span className={`font-bold ${theme.colors.text.accent}`}>
-                {startDate}
-              </span>
-            </p>
-            <p className={`text-sm ${theme.colors.text.secondary}`}>
-              End Date:{' '}
-              <span className={`font-bold ${theme.colors.text.accent}`}>
-                {endDate}
-              </span>
-            </p>
-          </div>
-
-          <div
-            className="p-4 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300 overflow-hidden"
-            role="progressbar"
-            aria-valuenow={currentStatusIndex + 1}
-            aria-valuemin={1}
-            aria-valuemax={statusStages.length}
+      <main className="flex-1 p-4 xs:p-6 sm:p-8 flex flex-col gap-4 xs:gap-6 max-w-7xl mx-auto w-full box-border">
+        {/* Header Section */}
+        <div className="flex flex-col xs:flex-row justify-between items-start xs:items-center gap-4 xs:gap-6">
+          <button
+            onClick={() => router.push('/')}
+            className={`${theme.colors.text.primary} hover:text-purple-300 text-sm xs:text-base font-medium`}
           >
-            <h3 className="text-lg font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-4">
-              Status
-            </h3>
-            <div className="relative flex flex-col gap-4">
-              <div className="absolute left-6 top-0 bottom-0 w-1 bg-gray-700">
-                <div
-                  className="w-full bg-gradient-to-b from-green-500 to-teal-600"
-                  style={{
-                    height: `${
-                      (currentStatusIndex + 1) *
-                      (100 / statusStages.length)
-                    }%`,
-                  }}
-                />
-              </div>
-              {statusStages.map((stage, index) => (
-                <div
-                  key={stage}
-                  className="flex items-center group relative animate-fade-in"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <div
-                    className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md hover:animate-gradient ${
-                      index <= currentStatusIndex
-                        ? 'bg-gradient-to-r from-green-500 to-teal-600'
-                        : index === currentStatusIndex + 1
-                        ? 'bg-gradient-to-r from-purple-600 to-cyan-500 animate-pulse ring-2 ring-cyan-400'
-                        : 'bg-gray-600'
-                    }`}
-                  >
-                    {index <= currentStatusIndex ? (
-                      <FaCheckCircle className="text-white" />
-                    ) : (
-                      index + 1
-                    )}
-                  </div>
-                  <div className="ml-4">
-                    <span
-                      className={`text-sm capitalize ${
-                        index <= currentStatusIndex ||
-                        index === currentStatusIndex + 1
-                          ? 'font-bold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text'
-                          : theme.colors.text.secondary
-                      }`}
-                    >
-                      {stage}
-                    </span>
-                  </div>
-                  <div className="absolute left-0 top-12 hidden group-hover:block bg-black/90 backdrop-blur-sm text-white text-xs p-2 rounded shadow-lg z-10 flex items-center space-x-2">
-                    {stage === 'Live' ? <FaClock /> : <FaCheckCircle />}
-                    <span>
-                      {{
-                        Created: 'Proposal submitted',
-                        Active: 'Proposal activated for voting',
-                        Live: `Voting in progress${
-                          campaign.endDate
-                            ? ` until ${new Date(
-                                campaign.endDate
-                              ).toLocaleDateString()}`
-                            : ''
-                        }`,
-                        Approved: 'Proposal approved',
-                        Ended: 'Proposal ended',
-                      }[stage]}
-                    </span>
-                  </div>
-                  {index < statusStages.length - 1 && (
-                    <svg
-                      className="absolute left-10 top-12 w-4 h-8"
-                      viewBox="0 0 16 32"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                    >
-                      <path
-                        d="M8 0 L8 28 L12 24 L8 32 L4 24 L8 28 Z"
-                        fill={index < currentStatusIndex ? '#34d399' : '#4b5563'}
-                      />
-                    </svg>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+            ← Back to Proposals
+          </button>
+          {!isConnected ? (
+            <button
+              onClick={() => open()}
+              className={`w-full xs:w-auto min-h-12 bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} text-white px-4 py-3 rounded-full text-sm xs:text-base font-medium transition-transform transform hover:scale-105`}
+            >
+              Connect Wallet
+            </button>
+          ) : (
+            <button
+              onClick={() => disconnect()}
+              className={`w-full xs:w-auto min-h-12 bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 py-3 rounded-full text-sm xs:text-base font-medium transition-transform transform hover:scale-105`}
+            >
+              Disconnect Wallet
+            </button>
+          )}
         </div>
 
-        <div className="flex-1 flex flex-col">
-          <div className="flex justify-between items-center mb-4">
-            <button
-              onClick={() => router.push('/')}
-              className={`${theme.colors.text.primary} hover:text-purple-300 text-sm`}
-            >
-              ← Back to Proposals
-            </button>
-
-            {!isConnected ? (
-              <button
-                onClick={() => open()}
-                className={`bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} text-white px-4 py-2 rounded-full text-sm font-medium transition-transform transform hover:scale-105`}
-              >
-                Connect Wallet
-              </button>
-            ) : (
-              <button
-                onClick={() => disconnect()}
-                className={`bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-4 py-2 rounded-full text-sm font-medium transition-transform transform hover:scale-105`}
-              >
-                Disconnect Wallet
-              </button>
-            )}
-          </div>
-
-          <div
-            className={`${theme.bg.primary} rounded-xl border ${theme.border} ${theme.shadow} p-6 flex-1`}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full flex items-center justify-center text-2xl">
-                  {getRandomCatEmoji(campaign.author)}
-                </div>
-                <div>
-                  <h1
-                    className={`text-2xl md:text-3xl font-bold ${theme.colors.text.primary}`}
-                  >
-                    Proposal ID: {campaign.contractProposalId}
-                  </h1>
-                  <p
-                    className={`text-sm ${theme.colors.text.accent} italic`}
-                  >
-                    By {shortenAddress(campaign.author)}
-                  </p>
-                </div>
-              </div>
-              <div
-                className={`px-3 py-1 rounded-full text-xs font-semibold text-white ${
-                  isLive
-                    ? 'bg-gradient-to-r from-green-400 to-teal-300 animate-pulse'
-                    : 'bg-gray-600'
-                }`}
-              >
-                {isLive ? 'Live' : 'Ended'}
-              </div>
+        {/* Main Content */}
+        <div className="flex flex-col xl:flex-row gap-4 xs:gap-6">
+          {/* Sidebar (Image, Info, Status) */}
+          <div className="w-full xl:w-1/3 flex flex-col gap-4 xs:gap-6">
+            {/* Social Links */}
+            <div className="flex justify-center gap-4 xs:gap-6 py-2 xs:py-4">
+              {socialLinks.twitter && isValidUrl(socialLinks.twitter) && (
+                <a
+                  href={socialLinks.twitter}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xl xs:text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
+                  aria-label="X Profile"
+                >
+                  <FaTwitter />
+                </a>
+              )}
+              {socialLinks.discord && isValidUrl(socialLinks.discord) && (
+                <a
+                  href={socialLinks.discord}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xl xs:text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
+                  aria-label="Discord Server"
+                >
+                  <FaDiscord />
+                </a>
+              )}
+              {socialLinks.website && isValidUrl(socialLinks.website) && (
+                <a
+                  href={socialLinks.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xl xs:text-2xl text-gray-300 hover:text-cyan-400 hover:scale-110 transition-all duration-200"
+                  aria-label="Website"
+                >
+                  <FaGlobe />
+                </a>
+              )}
             </div>
 
-            <h2
-              className={`text-2xl md:text-4xl font-bold ${theme.colors.text.primary} drop-shadow-md mb-2 relative`}
-            >
-              {campaign.title}
-              <span className="absolute bottom-0 left-0 w-1/2 h-1 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-full" />
-            </h2>
+            {/* Image */}
+            <div className="relative w-full aspect-[3/2] xs:aspect-[4/3] sm:aspect-square max-h-64">
+              <Image
+                src={campaign.image ?? '/campaigns/placeholder.png'}
+                alt={campaign.title}
+                fill
+                sizes="(max-width: 480px) 100vw, (max-width: 768px) 100vw, (max-width: 1280px) 50vw, 33vw"
+                className="object-cover rounded-md shadow-lg"
+                onError={(e) => (e.currentTarget.src = '/campaigns/placeholder.png')}
+              />
+            </div>
 
-            <div className="p-6 rounded-lg bg-black/20 backdrop-blur-md border border-purple-900/50 hover:border-purple-500 transition-all duration-300 mb-4">
-              <p className={`text-base ${theme.colors.text.secondary}`}>
-                {campaign.content}
+            {/* Proposal Information */}
+            <div className="p-4 xs:p-6 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300">
+              <h3 className="text-base xs:text-lg sm:text-xl font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-2">
+                Proposal Information
+              </h3>
+              <p className={`text-sm xs:text-base ${theme.colors.text.secondary}`}>
+                Created By:{' '}
+                <span className={`font-bold ${theme.colors.text.accent}`}>
+                  {shortenAddress(campaign.author)}
+                </span>
+              </p>
+              <p className={`text-sm xs:text-base ${theme.colors.text.secondary}`}>
+                Start Date:{' '}
+                <span className={`font-bold ${theme.colors.text.accent}`}>
+                  {startDate}
+                </span>
+              </p>
+              <p className={`text-sm xs:text-base ${theme.colors.text.secondary}`}>
+                End Date:{' '}
+                <span className={`font-bold ${theme.colors.text.accent}`}>
+                  {endDate}
+                </span>
               </p>
             </div>
 
-            {isConnected && (
-              <div className="bg-gray-900/70 rounded-lg p-4 text-center mb-4">
-                <h3
-                  className={`text-lg font-semibold ${theme.colors.text.primary} mb-2`}
-                >
-                  Your Voting Power
-                </h3>
-                <p
-                  className={`text-2xl font-bold ${theme.colors.text.accent} drop-shadow-md`}
-                >
-                  {votingPower}
-                </p>
-              </div>
-            )}
-
-            {(campaign.invalid || campaign.deleted) && (
-              <div className="bg-red-900/50 border border-red-700 p-4 rounded-lg mb-4">
-                <p className="text-red-200">
-                  {campaign.deleted
-                    ? 'This proposal has been deleted.'
-                    : 'This proposal is invalid.'}
-                </p>
-                <p className="text-sm text-red-300 mt-2">
-                  This proposal does not exist on‐chain or has been deleted.
-                  Please contact the admin.
-                </p>
-              </div>
-            )}
-
-            {!campaign.invalid && !campaign.deleted && (
-              <div className="flex flex-col gap-4 mb-4">
-                <VoteButtons
-                  campaignId={proposalId!}
-                  isVotable={campaign.isVotable}
-                  votedByUser={
-                    campaign.votedByUser === 'abstain'
-                      ? null
-                      : (campaign.votedByUser as 'yes' | 'no' | null)
-                  }
-                  isVoting={isVoting}
-                  onVote={onVote}
-                />
-              </div>
-            )}
-
-            <div className="flex gap-4 mb-4">
-              <LikeButton
-                likedByUser={campaign.likedByUser}
-                isLiking={isLiking}
-                totalLikes={totalLikes}
-                onLike={handleLike}
-              />
-
-              <button
-                onClick={() =>
-                  document.getElementById('comment-input')?.focus()
-                }
-                disabled={campaign.deleted}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-lg bg-gray-900/70 hover:bg-gray-800/70 transition-all duration-200 group ${
-                  campaign.deleted ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                <FaComment className="text-lg text-blue-400 group-hover:animate-pulse" />
-                <span className={`text-sm font-semibold ${theme.colors.text.accent}`}>
-                  {campaign.commentCount}
-                </span>
-              </button>
-
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(shareLink);
-                  toast.success('Link copied to clipboard!');
-                }}
-                className={`px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} transition-all duration-300`}
-                aria-label="Share Proposal"
-              >
-                Share
-              </button>
-            </div>
-
-            <div className="space-y-3 mb-4">
-              <div>
-                <div className="flex justify-between text-xs text-gray-300 mb-1">
-                  <span>Yes: {yesVotes}</span>
-                  <span>
-                    {totalVotes > 0
-                      ? ((yesVotes / totalVotes) * 100).toFixed(1)
-                      : 0}
-                    %
-                  </span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+            {/* Status Progress Bar */}
+            <div
+              className="p-4 xs:p-6 rounded-lg bg-gray-900/70 border border-gray-700 shadow-lg hover:scale-105 transition-all duration-300 overflow-hidden"
+              role="progressbar"
+              aria-valuenow={currentStatusIndex + 1}
+              aria-valuemin={1}
+              aria-valuemax={statusStages.length}
+            >
+              <h3 className="text-base xs:text-lg sm:text-xl font-semibold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text mb-4">
+                Status
+              </h3>
+              <div className="relative flex flex-col gap-4">
+                <div className="absolute left-4 xs:left-5 top-0 bottom-0 w-1 bg-gray-700">
                   <div
-                    className="bg-gradient-to-r from-green-500 to-teal-600 h-full transition-all duration-500 ease-in-out"
+                    className="w-full bg-gradient-to-b from-green-500 to-teal-600"
                     style={{
-                      width: `${
-                        totalVotes > 0
-                          ? (yesVotes / totalVotes) * 100
-                          : 0
+                      height: `${
+                        (currentStatusIndex + 1) *
+                        (100 / statusStages.length)
                       }%`,
                     }}
                   />
                 </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-xs text-gray-300 mb-1">
-                  <span>No: {noVotes}</span>
-                  <span>
-                    {totalVotes > 0
-                      ? ((noVotes / totalVotes) * 100).toFixed(1)
-                      : 0}
-                    %
-                  </span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                {statusStages.map((stage, index) => (
                   <div
-                    className="bg-gradient-to-r from-red-900 to-orange-400 h-full transition-all duration-500 ease-in-out"
-                    style={{
-                      width: `${
-                        totalVotes > 0
-                          ? (noVotes / totalVotes) * 100
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <h2 className={`text-xl font-bold ${theme.colors.text} mb-4`}>
-                Comments
-              </h2>
-              <textarea
-                id="comment-input"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                className={`w-full p-2 ${theme.bg.secondary} text-white border ${theme.border} rounded-lg mb-2`}
-                placeholder="Add a comment..."
-                disabled={!isConnected || campaign.deleted}
-                rows={4}
-              />
-              <button
-                onClick={async () => {
-                  if (
-                    !commentText ||
-                    !isConnected ||
-                    !address ||
-                    campaign.deleted
-                  )
-                    return;
-                  try {
-                    const commentRef = await addDoc(
-                      collection(
-                        db,
-                        'campaigns',
-                        proposalId!,
-                        'comments'
-                      ),
-                      {
-                        text: commentText,
-                        user: address.toLowerCase(),
-                        timestamp: new Date().toISOString(),
-                      }
-                    );
-                    await updateDoc(
-                      doc(db, 'campaigns', proposalId!),
-                      {
-                        commentCount: increment(1),
-                      }
-                    );
-                    setComments((prev) => [
-                      {
-                        id: commentRef.id,
-                        text: commentText,
-                        user: address.toLowerCase(),
-                        timestamp: new Date().toISOString(),
-                        likeCount: 0,
-                        likedByUser: false,
-                      },
-                      ...prev,
-                    ]);
-                    setCampaign((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            commentCount: prev.commentCount + 1,
-                          }
-                        : prev
-                    );
-                    setCommentText('');
-                    toast.success('Comment added!');
-                  } catch (err) {
-                    console.error('Failed to add comment:', err);
-                    toast.error('Failed to add comment.');
-                  }
-                }}
-                disabled={
-                  !isConnected || !commentText || campaign.deleted
-                }
-                className={`w-full px-4 py-2 rounded-full text-sm font-semibold text-white ${
-                  !isConnected || !commentText || campaign.deleted
-                    ? 'bg-gray-600 cursor-not-allowed'
-                    : `bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary}`
-                } mb-4`}
-              >
-                Submit Comment
-              </button>
-
-              <div className="max-h-96 overflow-y-auto custom-scrollbar">
-                {comments.map((comment) => (
-                  <div
-                    key={comment.id}
-                    className={`${theme.bg.secondary} p-4 rounded-lg border ${theme.border} mb-2 animate-fade-in`}
+                    key={stage}
+                    className="flex items-center group relative animate-fade-in"
+                    style={{ animationDelay: `${index * 100}ms` }}
                   >
-                    <div className="flex items-center space-x-3 mb-2">
-                      <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full flex items-center justify-center text-xl">
-                        {getRandomCatEmoji(comment.user)}
-                      </div>
-                      <p className={`text-sm ${theme.colors.text.accent}`}>
-                        {shortenAddress(comment.user)}
-                      </p>
+                    <div
+                      className={`w-8 h-8 xs:w-10 xs:h-10 rounded-full flex items-center justify-center shadow-md hover:animate-gradient ${
+                        index <= currentStatusIndex
+                          ? 'bg-gradient-to-r from-green-500 to-teal-600'
+                          : index === currentStatusIndex + 1
+                          ? 'bg-gradient-to-r from-purple-600 to-cyan-500 animate-pulse ring-2 ring-cyan-400'
+                          : 'bg-gray-600'
+                      }`}
+                    >
+                      {index <= currentStatusIndex ? (
+                        <FaCheckCircle className="text-white text-xs xs:text-sm" />
+                      ) : (
+                        <span className="text-xs xs:text-sm">{index + 1}</span>
+                      )}
                     </div>
-                    <p className={theme.colors.text.secondary}>
-                      {comment.text}
-                    </p>
-                    <div className="flex items-center space-x-2 mt-2">
-                      <button
-                        onClick={async () => {
-                          if (
-                            !isConnected ||
-                            !address ||
-                            comment.likedByUser ||
-                            campaign.deleted
-                          )
-                            return;
-                          try {
-                            const likeRef = doc(
-                              db,
-                              'campaigns',
-                              proposalId!,
-                              'comments',
-                              comment.id,
-                              'likes',
-                              address.toLowerCase()
-                            );
-                            const likeSnap = await getDoc(likeRef);
-                            if (!likeSnap.exists()) {
-                              await setDoc(likeRef, {
-                                likedAt: new Date().toISOString(),
-                              });
-                              setComments((prev) =>
-                                prev.map((c) =>
-                                  c.id === comment.id
-                                    ? {
-                                        ...c,
-                                        likeCount: c.likeCount + 1,
-                                        likedByUser: true,
-                                      }
-                                    : c
-                                )
-                              );
-                              toast.success('Comment liked!');
-                            }
-                          } catch (err) {
-                            console.error('Failed to like comment:', err);
-                            toast.error('Failed to like comment.');
-                          }
-                        }}
-                        disabled={
-                          comment.likedByUser ||
-                          !isConnected ||
-                          campaign.deleted
-                        }
-                        className={`flex items-center space-x-1 text-sm ${
-                          comment.likedByUser
-                            ? 'text-red-400'
-                            : 'text-gray-400'
-                        } hover:text-red-300 transition-colors duration-300`}
+                    <div className="ml-3 xs:ml-4">
+                      <span
+                        className={`text-xs xs:text-sm sm:text-base capitalize ${
+                          index <= currentStatusIndex ||
+                          index === currentStatusIndex + 1
+                            ? 'font-bold bg-gradient-to-r from-purple-600 to-cyan-500 text-transparent bg-clip-text'
+                            : theme.colors.text.secondary
+                        }`}
                       >
-                        <FaHeart className="text-sm" />
-                        <span>
-                          {comment.likeCount}{' '}
-                          {comment.likeCount === 1
-                            ? 'Like'
-                            : 'Likes'}
-                        </span>
-                      </button>
-                      <p className="text-xs text-gray-400">
-                        {new Date(comment.timestamp).toLocaleString()}
-                      </p>
+                        {stage}
+                      </span>
                     </div>
+                    <div className="absolute left-auto right-2 top-10 xs:top-12 hidden group-hover:block bg-black/90 backdrop-blur-sm text-white text-xs p-2 rounded shadow-lg z-10 flex items-center space-x-2 max-w-[80vw] w-48">
+                      {stage === 'Live' ? <FaClock /> : <FaCheckCircle />}
+                      <span>
+                        {{
+                          Created: 'Proposal submitted',
+                          Active: 'Proposal activated for voting',
+                          Live: `Voting in progress${
+                            campaign.endDate
+                              ? ` until ${new Date(
+                                  campaign.endDate
+                                ).toLocaleDateString()}`
+                              : ''
+                          }`,
+                          Approved: 'Proposal approved',
+                          Ended: 'Proposal ended',
+                        }[stage]}
+                      </span>
+                    </div>
+                    {index < statusStages.length - 1 && (
+                      <svg
+                        className="absolute left-6 xs:left-7 top-8 xs:top-10 w-3 xs:w-4 h-6 xs:h-8"
+                        viewBox="0 0 16 32"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M8 0 L8 28 L12 24 L8 32 L4 24 L8 28 Z"
+                          fill={index < currentStatusIndex ? '#34d399' : '#4b5563'}
+                        />
+                      </svg>
+                    )}
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Main Content */}
+          <div className="flex-1 flex flex-col">
+            <div
+              className={`${theme.bg.primary} rounded-xl border ${theme.border} ${theme.shadow} p-4 xs:p-6 flex-1`}
+            >
+              <div className="flex flex-col xs:flex-row xs:items-center xs:justify-between mb-4 gap-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 xs:w-10 xs:h-10 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full flex items-center justify-center text-lg xs:text-xl">
+                    {getRandomCatEmoji(campaign.author)}
+                  </div>
+                  <div>
+                    <h1
+                      className={`text-base xs:text-lg sm:text-xl md:text-2xl font-bold ${theme.colors.text.primary}`}
+                    >
+                      Proposal ID: {campaign.contractProposalId}
+                    </h1>
+                    <p
+                      className={`text-xs xs:text-sm ${theme.colors.text.accent} italic`}
+                    >
+                      By {shortenAddress(campaign.author)}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className={`px-2 xs:px-3 py-1 rounded-full text-xs font-semibold text-white self-start xs:self-center ${
+                    isLive
+                      ? 'bg-gradient-to-r from-green-400 to-teal-300 animate-pulse'
+                      : 'bg-gray-600'
+                  }`}
+                >
+                  {isLive ? 'Live' : 'Ended'}
+                </div>
+              </div>
+
+              <h2
+                className={`text-base xs:text-lg sm:text-xl md:text-2xl font-bold ${theme.colors.text.primary} drop-shadow-md mb-2 relative`}
+              >
+                {campaign.title}
+                <span className="absolute bottom-0 left-0 w-1/2 h-1 bg-gradient-to-r from-purple-600 to-cyan-500 rounded-full" />
+              </h2>
+
+              <div className="p-4 xs:p-6 rounded-lg bg-black/20 backdrop-blur-md border border-purple-900/50 hover:border-purple-500 transition-all duration-300 mb-4">
+                <p className={`text-sm xs:text-base ${theme.colors.text.secondary}`}>
+                  {campaign.content}
+                </p>
+              </div>
+
+              {isConnected && (
+                <div className="bg-gray-900/70 rounded-lg p-4 text-center mb-4">
+                  <h3
+                    className={`text-sm xs:text-base sm:text-lg font-semibold ${theme.colors.text.primary} mb-2`}
+                  >
+                    Your Voting Power
+                  </h3>
+                  <p
+                    className={`text-base xs:text-lg sm:text-xl font-bold ${theme.colors.text.accent} drop-shadow-md`}
+                  >
+                    {votingPower}
+                  </p>
+                </div>
+              )}
+
+              {(campaign.invalid || campaign.deleted) && (
+                <div className="bg-red-900/50 border border-red-700 p-4 rounded-lg mb-4">
+                  <p className="text-red-200 text-sm xs:text-base">
+                    {campaign.deleted
+                      ? 'This proposal has been deleted.'
+                      : 'This proposal is invalid.'}
+                  </p>
+                  <p className="text-xs xs:text-sm text-red-300 mt-2">
+                    This proposal does not exist on‐chain or has been deleted.
+                    Please contact the admin.
+                  </p>
+                </div>
+              )}
+
+              {!campaign.invalid && !campaign.deleted && (
+                <div className="flex flex-col gap-4 mb-4">
+                  <VoteButtons
+                    campaignId={proposalId!}
+                    isVotable={campaign.isVotable}
+                    votedByUser={
+                      campaign.votedByUser === 'abstain'
+                        ? null
+                        : (campaign.votedByUser as 'yes' | 'no' | null)
+                    }
+                    isVoting={isVoting}
+                    onVote={onVote}
+                  />
+                </div>
+              )}
+
+              <div className="flex flex-wrap gap-3 xs:gap-4 mb-4">
+                <LikeButton
+                  likedByUser={campaign.likedByUser}
+                  isLiking={isLiking}
+                  totalLikes={totalLikes}
+                  onLike={handleLike}
+                />
+
+                <button
+                  onClick={() =>
+                    document.getElementById('comment-input')?.focus()
+                  }
+                  disabled={campaign.deleted}
+                  className={`flex items-center space-x-2 px-3 xs:px-4 py-2 min-h-10 rounded-lg bg-gray-900/70 hover:bg-gray-800/70 transition-all duration-200 group ${
+                    campaign.deleted ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <FaComment className="text-base xs:text-lg text-blue-400 group-hover:animate-pulse" />
+                  <span className={`text-sm xs:text-base font-semibold ${theme.colors.text.accent}`}>
+                    {campaign.commentCount}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(shareLink);
+                    toast.success('Link copied to clipboard!');
+                  }}
+                  className={`w-full xs:w-auto min-h-10 px-3 xs:px-4 py-2 rounded-full text-sm xs:text-base font-semibold text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} transition-all duration-300`}
+                  aria-label="Share Proposal"
+                >
+                  Share
+                </button>
+              </div>
+
+              <div className="space-y-3 mb-4">
+                <div>
+                  <div className="flex justify-between text-xs xs:text-sm text-gray-300 mb-1">
+                    <span>Yes: {yesVotes}</span>
+                    <span>
+                      {totalVotes > 0
+                        ? ((yesVotes / totalVotes) * 100).toFixed(1)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 xs:h-3 overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-green-500 to-teal-600 h-full transition-all duration-500 ease-in-out"
+                      style={{
+                        width: `${
+                          totalVotes > 0
+                            ? (yesVotes / totalVotes) * 100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs xs:text-sm text-gray-300 mb-1">
+                    <span>No: {noVotes}</span>
+                    <span>
+                      {totalVotes > 0
+                        ? ((noVotes / totalVotes) * 100).toFixed(1)
+                        : 0}
+                      %
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2 xs:h-3 overflow-hidden">
+                    <div
+                      className="bg-gradient-to-r from-red-900 to-orange-400 h-full transition-all duration-500 ease-in-out"
+                      style={{
+                        width: `${
+                          totalVotes > 0
+                            ? (noVotes / totalVotes) * 100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h2 className={`text-base xs:text-lg sm:text-xl font-bold ${theme.colors.text} mb-4`}>
+                  Comments
+                </h2>
+                <textarea
+                  id="comment-input"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  className={`w-full p-2 xs:p-3 ${theme.bg.secondary} text-white border ${theme.border} rounded-lg mb-2 text-sm xs:text-base`}
+                  placeholder="Add a comment..."
+                  disabled={!isConnected || campaign.deleted}
+                  rows={4}
+                />
+                <button
+                  onClick={async () => {
+                    if (
+                      !commentText ||
+                      !isConnected ||
+                      !address ||
+                      campaign.deleted
+                    )
+                      return;
+                    try {
+                      const commentRef = await addDoc(
+                        collection(
+                          db,
+                          'campaigns',
+                          proposalId!,
+                          'comments'
+                        ),
+                        {
+                          text: commentText,
+                          user: address.toLowerCase(),
+                          timestamp: new Date().toISOString(),
+                        }
+                      );
+                      await updateDoc(
+                        doc(db, 'campaigns', proposalId!),
+                        {
+                          commentCount: increment(1),
+                        }
+                      );
+                      setComments((prev) => [
+                        {
+                          id: commentRef.id,
+                          text: commentText,
+                          user: address.toLowerCase(),
+                          timestamp: new Date().toISOString(),
+                          likeCount: 0,
+                          likedByUser: false,
+                        },
+                        ...prev,
+                      ]);
+                      setCampaign((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              commentCount: prev.commentCount + 1,
+                            }
+                          : prev
+                      );
+                      setCommentText('');
+                      toast.success('Comment added!');
+                    } catch (err) {
+                      console.error('Failed to add comment:', err);
+                      toast.error('Failed to add comment.');
+                    }
+                  }}
+                  disabled={
+                    !isConnected || !commentText || campaign.deleted
+                  }
+                  className={`w-full min-h-12 px-3 xs:px-4 py-2 rounded-full text-sm xs:text-base font-semibold text-white ${
+                    !isConnected || !commentText || campaign.deleted
+                      ? 'bg-gray-600 cursor-not-allowed'
+                      : `bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary}`
+                  } mb-4`}
+                >
+                  Submit Comment
+                </button>
+
+                <div className="max-h-80 overflow-y-auto custom-scrollbar">
+                  {comments.map((comment) => (
+                    <div
+                      key={comment.id}
+                      className={`${theme.bg.secondary} p-3 xs:p-4 rounded-lg border ${theme.border} mb-2 animate-fade-in`}
+                    >
+                      <div className="flex items-center space-x-2 xs:space-x-3 mb-2">
+                        <div className="w-6 h-6 xs:w-8 xs:h-8 bg-gradient-to-br from-purple-600 to-pink-500 rounded-full flex items-center justify-center text-base xs:text-lg">
+                          {getRandomCatEmoji(comment.user)}
+                        </div>
+                        <p className={`text-xs xs:text-sm ${theme.colors.text.accent}`}>
+                          {shortenAddress(comment.user)}
+                        </p>
+                      </div>
+                      <p className={`text-sm xs:text-base ${theme.colors.text.secondary}`}>
+                        {comment.text}
+                      </p>
+                      <div className="flex items-center space-x-2 xs:space-x-3 mt-2">
+                        <button
+                          onClick={async () => {
+                            if (
+                              !isConnected ||
+                              !address ||
+                              comment.likedByUser ||
+                              campaign.deleted
+                            )
+                              return;
+                            try {
+                              const likeRef = doc(
+                                db,
+                                'campaigns',
+                                proposalId!,
+                                'comments',
+                                comment.id,
+                                'likes',
+                                address.toLowerCase()
+                              );
+                              const likeSnap = await getDoc(likeRef);
+                              if (!likeSnap.exists()) {
+                                await setDoc(likeRef, {
+                                  likedAt: new Date().toISOString(),
+                                });
+                                setComments((prev) =>
+                                  prev.map((c) =>
+                                    c.id === comment.id
+                                      ? {
+                                          ...c,
+                                          likeCount: c.likeCount + 1,
+                                          likedByUser: true,
+                                        }
+                                      : c
+                                  )
+                                );
+                                toast.success('Comment liked!');
+                              }
+                            } catch (err) {
+                              console.error('Failed to like comment:', err);
+                              toast.error('Failed to like comment.');
+                            }
+                          }}
+                          disabled={
+                            comment.likedByUser ||
+                            !isConnected ||
+                            campaign.deleted
+                          }
+                          className={`flex items-center space-x-1 text-xs xs:text-sm ${
+                            comment.likedByUser
+                              ? 'text-red-400'
+                              : 'text-gray-400'
+                          } hover:text-red-300 transition-colors duration-300 min-h-8 px-2`}
+                        >
+                          <FaHeart className="text-xs xs:text-sm" />
+                          <span>
+                            {comment.likeCount}{' '}
+                            {comment.likeCount === 1
+                              ? 'Like'
+                              : 'Likes'}
+                          </span>
+                        </button>
+                        <p className="text-xs xs:text-sm text-gray-400">
+                          {new Date(comment.timestamp).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

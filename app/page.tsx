@@ -1,5 +1,4 @@
 // File: app/page.tsx
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -105,7 +104,7 @@ export default function Home() {
         // 2) Build array of Campaign objects
         const fetchedCampaigns: (Campaign | null)[] = await Promise.all(
           campSnapshot.docs.map(async (campDoc) => {
-            const campData = campDoc.data() as any;
+            const campData = campDoc.data();
 
             // Skip if deleted
             if (campData.deleted) {
@@ -115,31 +114,22 @@ export default function Home() {
             // (A) Check if user has liked and get total likes
             let userLiked = false;
             let likeCount = 0;
+            const likesCollection = collection(
+              db,
+              'campaigns',
+              campDoc.id,
+              'likes'
+            );
+            const likesSnap = await getDocs(likesCollection);
             if (userAddress) {
-              const likesCollection = collection(
-                db,
-                'campaigns',
-                campDoc.id,
-                'likes'
-              );
-              const likesSnap = await getDocs(likesCollection);
               userLiked = likesSnap.docs.some(
                 (d) => d.id === userAddress.toLowerCase()
               );
-              likeCount = likesSnap.size;
-            } else {
-              const likesCollection = collection(
-                db,
-                'campaigns',
-                campDoc.id,
-                'likes'
-              );
-              const likesSnap = await getDocs(likesCollection);
-              likeCount = likesSnap.size;
             }
+            likeCount = likesSnap.size;
 
             // (B) Check if user has voted
-            let userVote: 'yes' | 'no' | null = null;
+            let userVote: 'yes' | 'no' | 'abstain' | null = null;
             if (userAddress) {
               const voteDocRef = doc(
                 db,
@@ -150,7 +140,10 @@ export default function Home() {
               );
               const voteDocSnap = await getDoc(voteDocRef);
               if (voteDocSnap.exists()) {
-                userVote = voteDocSnap.data().vote as 'yes' | 'no';
+                const voteData = voteDocSnap.data().vote;
+                if (voteData === 'yes' || voteData === 'no' || voteData === 'abstain') {
+                  userVote = voteData;
+                }
               }
             }
 
@@ -170,41 +163,59 @@ export default function Home() {
                 ? campData.date.toDate()
                 : new Date(campData.date || Date.now());
 
-            return {
+            // (E) Validate and normalize Firestore data
+            const author = typeof campData.author === 'string' ? campData.author.toLowerCase() : '';
+            const title = typeof campData.title === 'string' ? campData.title : '';
+            const content = typeof campData.content === 'string' ? campData.content : '';
+            const image = typeof campData.image === 'string' ? campData.image : '/campaigns/placeholder.png';
+            const yesVotes = typeof campData.yesVotes === 'number' ? campData.yesVotes : 0;
+            const noVotes = typeof campData.noVotes === 'number' ? campData.noVotes : 0;
+            const abstainVotes = typeof campData.abstainVotes === 'number' ? campData.abstainVotes : 0;
+            const contractProposalId = Number(campData.contractProposalId) || 0;
+            const status = ['Created', 'Active', 'Live', 'Approved', 'Ended'].includes(campData.status)
+              ? campData.status
+              : 'Created';
+            const endDate = campData.endDate
+              ? campData.endDate instanceof Timestamp
+                ? campData.endDate.toDate().toISOString()
+                : campData.endDate
+              : undefined;
+            const socialLinks = typeof campData.socialLinks === 'object' && campData.socialLinks !== null
+              ? campData.socialLinks as { twitter?: string; discord?: string; website?: string }
+              : { twitter: '', discord: '', website: '' };
+            const invalid = campData.invalid === true;
+            const allowAbstain = campData.allowAbstain === true;
+
+            const campaign: Campaign = {
               id: campDoc.id,
-              author: (campData.author as string).toLowerCase(),
-              title: campData.title as string,
-              content: campData.content as string,
+              author,
+              title,
+              content,
               date: date.toISOString(),
-              image:
-                (campData.image as string) ||
-                '/campaigns/placeholder.png',
-              yesVotes: (campData.yesVotes as number) || 0,
-              noVotes: (campData.noVotes as number) || 0,
+              image,
+              yesVotes,
+              noVotes,
+              abstainVotes,
               likedByUser: userLiked,
               votedByUser: userVote,
               isExpanded: false,
               isLiking: false,
               isVoting: false,
-              contractProposalId:
-                Number(campData.contractProposalId) || 0,
-              isVotable: false, // will set below
+              contractProposalId,
+              isVotable: false,
               commentCount,
-              likeCount, // Add likeCount to Campaign object
-              status: campData.status || 'Created',
-              endDate: campData.endDate
-                ? campData.endDate instanceof Timestamp
-                  ? campData.endDate.toDate().toISOString()
-                  : campData.endDate
-                : undefined,
-              socialLinks: campData.socialLinks || {
-                twitter: '',
-                discord: '',
-                website: '',
-              },
-              invalid: campData.invalid || false,
+              likeCount,
+              status,
+              endDate,
+              socialLinks,
+              invalid,
+              allowAbstain,
               deleted: false,
-            } as Campaign;
+            };
+
+            console.log('Created campaign:', campDoc.id, 'likeCount:', campaign.likeCount); // Debug
+
+            return campaign;
           })
         );
 
@@ -269,10 +280,14 @@ export default function Home() {
     const index = campaigns.findIndex((p) => p.id === campId);
     if (index === -1 || campaigns[index].likedByUser) return;
 
-    setCampaigns((prev) =>
-      prev.map((camp, i) =>
-        i === index ? { ...camp, isLiking: true } : camp
-      )
+    setCampaigns((prev: Campaign[]) =>
+      prev.map((camp: Campaign, i: number) => {
+        if (i === index) {
+          console.log('Updating campaign:', camp.id, 'likeCount:', camp.likeCount); // Debug
+          return { ...camp, likedByUser: true, isLiking: false, likeCount: camp.likeCount + 1 };
+        }
+        return camp;
+      })
     );
 
     try {
@@ -288,28 +303,29 @@ export default function Home() {
         await setDoc(likeRef, {
           likedAt: new Date().toISOString(),
         });
-        setCampaigns((prev) =>
-          prev.map((camp, i) =>
-            i === index
-              ? { ...camp, likedByUser: true, isLiking: false, likeCount: camp.likeCount + 1 }
-              : camp
-          )
-        );
         toast.success('Liked proposal!');
       } else {
-        setCampaigns((prev) =>
-          prev.map((camp, i) =>
-            i === index ? { ...camp, isLiking: false } : camp
-          )
+        setCampaigns((prev: Campaign[]) =>
+          prev.map((camp: Campaign, i: number) => {
+            if (i === index) {
+              console.log('Reverting campaign:', camp.id); // Debug
+              return { ...camp, isLiking: false };
+            }
+            return camp;
+          })
         );
       }
     } catch (error) {
       console.error('Failed to like proposal:', error);
       toast.error('Failed to like proposal.');
-      setCampaigns((prev) =>
-        prev.map((camp, i) =>
-          i === index ? { ...camp, isLiking: false } : camp
-        )
+      setCampaigns((prev: Campaign[]) =>
+        prev.map((camp: Campaign, i: number) => {
+          if (i === index) {
+            console.log('Error reverting campaign:', camp.id); // Debug
+            return { ...camp, isLiking: false };
+          }
+          return camp;
+        })
       );
     }
   };

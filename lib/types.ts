@@ -15,6 +15,7 @@ export interface Campaign {
   isVotable: boolean;
   isLiking?: boolean;
   isVoting?: boolean;
+  likeCount: number; // Added field for total likes
   isExpanded?: boolean;
   commentCount: number;
   allowAbstain: boolean;

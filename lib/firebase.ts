@@ -1,8 +1,11 @@
 // lib/firebase.ts
+
+
+// File: lib/firebase.ts
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
+import { getAuth } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -13,7 +16,13 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+console.log('Firebase config:', {
+  apiKey: firebaseConfig.apiKey ? 'Set' : 'Missing',
+  storageBucket: firebaseConfig.storageBucket || 'Missing',
+}); // Debug
+
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
-export const auth = getAuth(app);
 export const storage = getStorage(app);
+export const auth = getAuth(app);
+
