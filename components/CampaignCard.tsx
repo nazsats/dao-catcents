@@ -1,14 +1,15 @@
-// components/CampaignCard.tsx
+// File: components/CampaignCard.tsx
 import Image from 'next/image';
 import Link from 'next/link';
 import { Campaign } from '@/lib/types';
 import { getRandomCatEmoji, shortenAddress } from '@/lib/utils';
 import { theme } from '@/app/styles/theme';
 import { FaHeart, FaComment } from 'react-icons/fa';
+import toast from 'react-hot-toast';
 
 interface CampaignCardProps {
   campaign: Campaign;
-  onLike: () => void; // still accepts onLike
+  onLike: () => void;
 }
 
 export default function CampaignCard({
@@ -25,24 +26,20 @@ export default function CampaignCard({
     likedByUser,
     contractProposalId,
     commentCount,
-    date,
+    likeCount,
+    status,
   } = campaign;
 
   const totalVotes = yesVotes + noVotes;
-  const likesCount = likedByUser ? 1 : 0;
   const shareLink =
     typeof window !== 'undefined'
       ? `${window.location.origin}/proposal/${id}`
       : '';
 
-  // Calculate percentages for progress bars
   const yesPercentage = totalVotes > 0 ? (yesVotes / totalVotes) * 100 : 0;
   const noPercentage = totalVotes > 0 ? (noVotes / totalVotes) * 100 : 0;
 
-  // Determine Live/Ended status (placeholder: campaigns older than 7 days are Ended)
-  const campaignDate = new Date(date);
-  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const isLive = campaignDate > oneWeekAgo; // Replace with endDate or isVotable if available
+  const isLive = status === 'Live';
 
   return (
     <div
@@ -73,7 +70,6 @@ export default function CampaignCard({
               </p>
             </div>
           </div>
-          {/* Live/Ended Status */}
           <div
             className={`px-3 py-1 rounded-full text-xs font-semibold text-white ${
               isLive
@@ -85,13 +81,11 @@ export default function CampaignCard({
           </div>
         </div>
         <h4 className={`text-md font-medium ${theme.colors.text.primary} mb-3`}>{title}</h4>
-        {/* Total Votes */}
         <div className="mb-4 bg-gray-800/50 rounded-lg p-3 text-center">
           <p className={`text-xl md:text-2xl font-bold ${theme.colors.text.accent} drop-shadow-md`}>
             Total Votes: {totalVotes}
           </p>
         </div>
-        {/* Yes/No Progress Bars */}
         <div className="space-y-3 mb-4">
           <div>
             <div className="flex justify-between text-xs text-gray-300 mb-1">
@@ -118,9 +112,7 @@ export default function CampaignCard({
             </div>
           </div>
         </div>
-        {/* Likes and Comments */}
         <div className="grid grid-cols-2 gap-4 mb-4">
-          {/* Turn the left section into a <button> that calls onLike */}
           <button
             onClick={() => onLike()}
             disabled={likedByUser}
@@ -132,10 +124,9 @@ export default function CampaignCard({
           >
             <FaHeart className={`text-lg ${likedByUser ? 'text-red-200' : 'text-red-400'} ${likedByUser ? '' : 'group-hover:animate-pulse'}`} />
             <p className={`text-sm font-semibold ${theme.colors.text.secondary}`}>
-              <span className={theme.colors.text.accent}>{likesCount}</span> {likesCount === 1 ? 'Like' : 'Likes'}
+              <span className={theme.colors.text.accent}>{likeCount}</span> {likeCount === 1 ? 'Like' : 'Likes'}
             </p>
           </button>
-
           <div
             className={`flex items-center space-x-2 px-3 py-2 rounded-lg bg-gray-800/50 hover:bg-gray-700/50 transition-all duration-200 cursor-pointer group`}
           >
@@ -145,12 +136,11 @@ export default function CampaignCard({
             </p>
           </div>
         </div>
-        {/* Buttons */}
         <div className="space-y-2">
           <button
             onClick={() => {
               navigator.clipboard.writeText(shareLink);
-              // (optional) you can show a toast here if you like
+              toast.success('Link copied to clipboard!');
             }}
             className={`w-full px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${theme.colors.primary} hover:bg-gradient-to-r hover:${theme.colors.secondary} transition-all duration-300`}
             aria-label="Share Proposal"

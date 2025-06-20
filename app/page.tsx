@@ -112,8 +112,9 @@ export default function Home() {
               return null;
             }
 
-            // (A) Check if user has liked
+            // (A) Check if user has liked and get total likes
             let userLiked = false;
+            let likeCount = 0;
             if (userAddress) {
               const likesCollection = collection(
                 db,
@@ -125,6 +126,16 @@ export default function Home() {
               userLiked = likesSnap.docs.some(
                 (d) => d.id === userAddress.toLowerCase()
               );
+              likeCount = likesSnap.size;
+            } else {
+              const likesCollection = collection(
+                db,
+                'campaigns',
+                campDoc.id,
+                'likes'
+              );
+              const likesSnap = await getDocs(likesCollection);
+              likeCount = likesSnap.size;
             }
 
             // (B) Check if user has voted
@@ -179,6 +190,20 @@ export default function Home() {
                 Number(campData.contractProposalId) || 0,
               isVotable: false, // will set below
               commentCount,
+              likeCount, // Add likeCount to Campaign object
+              status: campData.status || 'Created',
+              endDate: campData.endDate
+                ? campData.endDate instanceof Timestamp
+                  ? campData.endDate.toDate().toISOString()
+                  : campData.endDate
+                : undefined,
+              socialLinks: campData.socialLinks || {
+                twitter: '',
+                discord: '',
+                website: '',
+              },
+              invalid: campData.invalid || false,
+              deleted: false,
             } as Campaign;
           })
         );
@@ -217,7 +242,6 @@ export default function Home() {
   // ─────────────────────────────────────────────────────────────────────────────
   // 3. Fetch on-chain vote counts in batch (wagmi useReadContracts)
   // ─────────────────────────────────────────────────────────────────────────────
-
   const campaignAbi = contractAbi as unknown as Abi;
 
   const voteCountQueries = useMemo(
@@ -259,7 +283,6 @@ export default function Home() {
         'likes',
         address.toLowerCase()
       );
-      // Use getDoc here (not getDocs) to fetch a single document
       const likeSnap = await getDoc(likeRef);
       if (!likeSnap.exists()) {
         await setDoc(likeRef, {
@@ -268,7 +291,7 @@ export default function Home() {
         setCampaigns((prev) =>
           prev.map((camp, i) =>
             i === index
-              ? { ...camp, likedByUser: true, isLiking: false }
+              ? { ...camp, likedByUser: true, isLiking: false, likeCount: camp.likeCount + 1 }
               : camp
           )
         );
@@ -380,7 +403,6 @@ export default function Home() {
                 className="p-2 text-gray-300 hover:text-white focus:outline-none"
               >
                 {mobileMenuOpen ? (
-                  // X icon
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-6 w-6"
@@ -391,7 +413,6 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 ) : (
-                  // Hamburger icon
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
                     className="h-6 w-6"
@@ -446,12 +467,10 @@ export default function Home() {
 
       {/* ─────────── Enhanced Hero Section ─────────── */}
       <section className="relative flex items-center justify-center h-[70vh] bg-gradient-to-br from-purple-900 to-indigo-800 overflow-hidden">
-        {/* Animated blurred blobs in background */}
         <div className="absolute -top-32 -left-32 w-72 h-72 bg-purple-700 rounded-full filter blur-3xl opacity-50 animate-pulse"></div>
         <div className="absolute -bottom-32 -right-32 w-72 h-72 bg-indigo-600 rounded-full filter blur-3xl opacity-50 animate-pulse"></div>
 
         <div className="relative z-10 text-center px-6">
-          {/* Gradient-text headline */}
           <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-green-300 to-blue-500 mb-4">
             Decentralized Demeowcracy
           </h1>
@@ -470,7 +489,6 @@ export default function Home() {
               </button>
             ) : (
               <div className="flex flex-col items-center space-y-4">
-                {/* Profile + Disconnect */}
                 <div className="flex items-center space-x-4">
                   <Profile
                     account={address!}
@@ -488,7 +506,6 @@ export default function Home() {
                     Disconnect Wallet
                   </button>
                 </div>
-                {/* Voting Power Display */}
                 <div className="bg-gray-900/70 rounded-full px-6 py-2">
                   <p className={`text-xl font-bold ${theme.colors.text.accent} drop-shadow-md`}>
                     Voting Power: {votingPower}
