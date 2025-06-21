@@ -160,12 +160,11 @@ export default function AdminPage() {
                   ? campData.endDate.toDate().toISOString()
                   : (campData.endDate as string)
                 : undefined,
-              socialLinks:
-                (campData.socialLinks as {
-                  twitter?: string;
-                  discord?: string;
-                  website?: string;
-                }) || { twitter: '', discord: '', website: '' },
+              socialLinks: {
+                twitter: typeof campData.socialLinks?.twitter === 'string' ? campData.socialLinks.twitter : '',
+                discord: typeof campData.socialLinks?.discord === 'string' ? campData.socialLinks.discord : '',
+                website: typeof campData.socialLinks?.website === 'string' ? campData.socialLinks.website : '',
+              },
               invalid: (campData.invalid as boolean) || false,
               deleted: (campData.deleted as boolean) || false,
               likedByUser: false,
@@ -307,6 +306,9 @@ export default function AdminPage() {
     );
     setIsUploading(true);
 
+    // Add a small delay to ensure Firebase auth is ready
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
     try {
       let imageUrl = form.image;
       if (imageFile) {
@@ -321,9 +323,13 @@ export default function AdminPage() {
         const response = await fetch('/api/upload-image', {
           method: 'POST',
           body: formData,
+          headers: {
+            'X-Firebase-UID': currentUser.uid, // Pass UID for server-side verification
+          },
         });
         const responseData = await response.json();
         console.log('Image upload response:', responseData);
+
         if (!response.ok) {
           const errorDetails = {
             status: response.status,
@@ -335,6 +341,12 @@ export default function AdminPage() {
           console.error('Image upload failed:', errorDetails);
           throw new Error(JSON.stringify(errorDetails));
         }
+
+        if (!responseData.imageUrl) {
+          console.error('No image URL returned:', responseData);
+          throw new Error('No image URL returned from upload');
+        }
+
         imageUrl = responseData.imageUrl;
         console.log('Image uploaded successfully:', imageUrl);
       }
@@ -648,16 +660,23 @@ export default function AdminPage() {
       console.error('Error creating/updating proposal:', {
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
-        details: error instanceof Error ? error.message : String(error),
+        details: typeof error === 'string' ? error : JSON.stringify(error, null, 2),
       });
-      let errMsg = 'Unknown error';
-      try {
-        const parsedError = JSON.parse(
-          error instanceof Error ? error.message : String(error)
-        );
-        errMsg = `${parsedError.error}: ${parsedError.details} (Code: ${parsedError.code})`;
-      } catch {
-        errMsg = error instanceof Error ? error.message : 'Unknown error';
+      let errMsg = 'Unknown error occurred while creating/updating proposal.';
+      if (typeof error === 'string') {
+        try {
+          const parsedError = JSON.parse(error);
+          errMsg = `${parsedError.error || 'Unknown error'}: ${parsedError.details || 'No details provided'} (Code: ${parsedError.code || 'unknown'})`;
+        } catch {
+          errMsg = error;
+        }
+      } else if (error instanceof Error) {
+        errMsg = error.message;
+        if (error.message.includes('app/no-app')) {
+          errMsg = 'Firebase initialization failed. Please check server configuration.';
+        } else if (error.message.includes('Unauthorized')) {
+          errMsg = 'Authentication failed. Please reconnect your wallet and try again.';
+        }
       }
       toast.dismiss(pendingToast);
       toast.error(
