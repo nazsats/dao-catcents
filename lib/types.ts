@@ -1,33 +1,32 @@
-// lib/types.ts
 export interface Campaign {
   id: string;
   author: string;
   title: string;
   content: string;
   date: string;
-  image?: string;
+  image: string;
   yesVotes: number;
   noVotes: number;
-  abstainVotes?: number;
-  likedByUser: boolean;
-  votedByUser: 'yes' | 'no' | 'abstain' | null;
+  abstainVotes: number;
   contractProposalId: number;
-  isVotable: boolean;
-  isLiking?: boolean;
-  isVoting?: boolean;
-  likeCount: number; // Added field for total likes
-  isExpanded?: boolean;
   commentCount: number;
+  likeCount: number;
   allowAbstain: boolean;
   status: 'Created' | 'Active' | 'Live' | 'Approved' | 'Ended';
   endDate?: string;
-  socialLinks?: {
+  socialLinks: {
     twitter?: string;
     discord?: string;
     website?: string;
   };
-  invalid?: boolean;
-  deleted?: boolean; // New field
+  invalid: boolean;
+  deleted: boolean;
+  likedByUser: boolean;
+  votedByUser: 'yes' | 'no' | 'abstain' | null;
+  isVotable: boolean;
+  isExpanded?: boolean;
+  isLiking?: boolean;
+  isVoting?: boolean;
 }
 
 export interface Comment {

@@ -1,70 +1,85 @@
-// File: app/api/upload-image/route.ts
 import { NextResponse } from 'next/server';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { storage } from '@/lib/firebase';
+import { v2 as cloudinary } from 'cloudinary';
+import { getAuth } from 'firebase/auth';
+
+// Define Cloudinary upload result type
+interface CloudinaryUploadResult {
+  secure_url: string;
+  [key: string]: unknown;
+}
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 export async function POST(request: Request) {
   try {
+    // Verify Cloudinary configuration
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      throw new Error('Cloudinary configuration is missing');
+    }
+
+    // Verify Firebase authentication
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized', details: 'User must be authenticated to upload images', code: 'auth/unauthenticated' },
+        { status: 401 }
+      );
+    }
+
+    console.log('Authenticated user:', { userId: user.uid });
+
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
     if (!file) {
-      console.error('No file provided in FormData');
-      return NextResponse.json(
-        { error: 'No file uploaded', details: 'FormData must contain a "file" field' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No file uploaded', code: 'no-file' }, { status: 400 });
     }
 
     if (!['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
-      console.error(`Invalid file type: ${file.type}`);
-      return NextResponse.json(
-        { error: 'Invalid file type', details: `File type "${file.type}" is not supported. Allowed types: image/jpeg, image/png, image/gif` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid file type', code: 'invalid-file-type' }, { status: 400 });
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      console.error(`File size too large: ${file.size} bytes`);
-      return NextResponse.json(
-        { error: 'File size exceeds limit', details: `File size ${file.size} bytes exceeds 5MB limit` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'File size exceeds 5MB', code: 'file-too-large' }, { status: 400 });
     }
 
-    // Sanitize file name to prevent invalid path errors
-    const fileName = `campaigns/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-    const storageRef = ref(storage, fileName);
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+    const fileName = `${Date.now()}_${file.name}`;
 
-    console.log(`Uploading file: ${fileName}, size: ${file.size}, type: ${file.type}`);
+    console.log('Uploading to Cloudinary:', { fileName, fileType: file.type, fileSize: file.size });
 
-    // Convert file to Buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    const snapshot = await uploadBytes(storageRef, buffer, {
-      contentType: file.type,
+    const uploadResult = await new Promise<CloudinaryUploadResult>((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'campaigns', public_id: fileName },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result as CloudinaryUploadResult);
+        }
+      ).end(fileBuffer);
     });
-    const imageUrl = await getDownloadURL(snapshot.ref);
 
-    console.log(`Upload successful: ${imageUrl}`);
+    const imageUrl = uploadResult.secure_url;
+
+    console.log('File uploaded successfully:', { imageUrl });
 
     return NextResponse.json({ imageUrl }, { status: 200 });
   } catch (error: unknown) {
-    const errorDetails = error instanceof Error
-      ? {
-          error: 'Failed to upload image',
-          details: error.message,
-          code: error.name || 'UnknownError',
-          stack: error.stack,
-        }
-      : {
-          error: 'Failed to upload image',
-          details: String(error),
-          code: 'UnknownError',
-        };
-
-    console.error('Image upload failed:', errorDetails);
-    return NextResponse.json(errorDetails, { status: 500 });
+    console.error('Image upload failed:', {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return NextResponse.json(
+      {
+        error: 'Failed to upload image',
+        code: error instanceof Error ? error.name : 'unknown',
+        details: error instanceof Error ? error.message : 'Unknown error occurred',
+      },
+      { status: 500 }
+    );
   }
 }

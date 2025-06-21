@@ -1,4 +1,3 @@
-// File: app/page.tsx
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -47,16 +46,12 @@ export default function Home() {
   const [currentPage, setCurrentPage] = useState(1);
   const cardsPerPage = 20;
 
-  // State for mobile menu toggle
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const votingPower = balanceData
     ? Math.floor(Number(balanceData.formatted))
     : 0;
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 1. Firebase Authentication (custom token)
-  // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function authenticate() {
       if (isConnected && address) {
@@ -85,33 +80,26 @@ export default function Home() {
     authenticate();
   }, [isConnected, address]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 2. Fetch campaigns (excluding deleted) + user metadata
-  // ─────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function fetchCampaignsAndUserData(userAddress: string) {
       setIsLoading(true);
       setError(null);
 
       try {
-        // 1) Query Firestore for all campaigns ordered by date desc
         const campQuery = query(
           collection(db, 'campaigns'),
           orderBy('date', 'desc')
         );
         const campSnapshot = await getDocs(campQuery);
 
-        // 2) Build array of Campaign objects
         const fetchedCampaigns: (Campaign | null)[] = await Promise.all(
           campSnapshot.docs.map(async (campDoc) => {
             const campData = campDoc.data();
 
-            // Skip if deleted
             if (campData.deleted) {
               return null;
             }
 
-            // (A) Check if user has liked and get total likes
             let userLiked = false;
             let likeCount = 0;
             const likesCollection = collection(
@@ -128,7 +116,6 @@ export default function Home() {
             }
             likeCount = likesSnap.size;
 
-            // (B) Check if user has voted
             let userVote: 'yes' | 'no' | 'abstain' | null = null;
             if (userAddress) {
               const voteDocRef = doc(
@@ -147,7 +134,6 @@ export default function Home() {
               }
             }
 
-            // (C) Count comments
             const commentsCollection = collection(
               db,
               'campaigns',
@@ -157,13 +143,11 @@ export default function Home() {
             const commentsSnapshot = await getDocs(commentsCollection);
             const commentCount = commentsSnapshot.size;
 
-            // (D) Normalize date
             const date =
               campData.date instanceof Timestamp
                 ? campData.date.toDate()
                 : new Date(campData.date || Date.now());
 
-            // (E) Validate and normalize Firestore data
             const author = typeof campData.author === 'string' ? campData.author.toLowerCase() : '';
             const title = typeof campData.title === 'string' ? campData.title : '';
             const content = typeof campData.content === 'string' ? campData.content : '';
@@ -173,16 +157,18 @@ export default function Home() {
             const abstainVotes = typeof campData.abstainVotes === 'number' ? campData.abstainVotes : 0;
             const contractProposalId = Number(campData.contractProposalId) || 0;
             const status = ['Created', 'Active', 'Live', 'Approved', 'Ended'].includes(campData.status)
-              ? campData.status
+              ? campData.status as Campaign['status']
               : 'Created';
             const endDate = campData.endDate
               ? campData.endDate instanceof Timestamp
                 ? campData.endDate.toDate().toISOString()
                 : campData.endDate
               : undefined;
-            const socialLinks = typeof campData.socialLinks === 'object' && campData.socialLinks !== null
-              ? campData.socialLinks as { twitter?: string; discord?: string; website?: string }
-              : { twitter: '', discord: '', website: '' };
+            const socialLinks = {
+              twitter: typeof campData.socialLinks?.twitter === 'string' ? campData.socialLinks.twitter : '',
+              discord: typeof campData.socialLinks?.discord === 'string' ? campData.socialLinks.discord : '',
+              website: typeof campData.socialLinks?.website === 'string' ? campData.socialLinks.website : '',
+            };
             const invalid = campData.invalid === true;
             const allowAbstain = campData.allowAbstain === true;
 
@@ -213,18 +199,16 @@ export default function Home() {
               deleted: false,
             };
 
-            console.log('Created campaign:', campDoc.id, 'likeCount:', campaign.likeCount); // Debug
+            console.log('Created campaign:', campDoc.id, 'likeCount:', campaign.likeCount);
 
             return campaign;
           })
         );
 
-        // Filter out nulls (deleted campaigns)
         const filteredCampaigns = fetchedCampaigns.filter(
           (c): c is Campaign => c !== null
         );
 
-        // Determine isVotable: only if user hasn’t voted AND status === 'Live'
         const updatedCampaigns = filteredCampaigns.map((camp) => {
           const isVotableNow =
             camp.votedByUser === null && camp.status === 'Live';
@@ -250,9 +234,6 @@ export default function Home() {
     }
   }, [address, isConnecting]);
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 3. Fetch on-chain vote counts in batch (wagmi useReadContracts)
-  // ─────────────────────────────────────────────────────────────────────────────
   const campaignAbi = contractAbi as unknown as Abi;
 
   const voteCountQueries = useMemo(
@@ -272,9 +253,6 @@ export default function Home() {
     query: { enabled: campaigns.length > 0 },
   });
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 4. Handle “Like” clicks
-  // ─────────────────────────────────────────────────────────────────────────────
   const handleLike = async (campId: string) => {
     if (!address) return;
     const index = campaigns.findIndex((p) => p.id === campId);
@@ -283,7 +261,7 @@ export default function Home() {
     setCampaigns((prev: Campaign[]) =>
       prev.map((camp: Campaign, i: number) => {
         if (i === index) {
-          console.log('Updating campaign:', camp.id, 'likeCount:', camp.likeCount); // Debug
+          console.log('Updating campaign:', camp.id, 'likeCount:', camp.likeCount);
           return { ...camp, likedByUser: true, isLiking: false, likeCount: camp.likeCount + 1 };
         }
         return camp;
@@ -308,7 +286,7 @@ export default function Home() {
         setCampaigns((prev: Campaign[]) =>
           prev.map((camp: Campaign, i: number) => {
             if (i === index) {
-              console.log('Reverting campaign:', camp.id); // Debug
+              console.log('Reverting campaign:', camp.id);
               return { ...camp, isLiking: false };
             }
             return camp;
@@ -321,7 +299,7 @@ export default function Home() {
       setCampaigns((prev: Campaign[]) =>
         prev.map((camp: Campaign, i: number) => {
           if (i === index) {
-            console.log('Error reverting campaign:', camp.id); // Debug
+            console.log('Error reverting campaign:', camp.id);
             return { ...camp, isLiking: false };
           }
           return camp;
@@ -330,9 +308,6 @@ export default function Home() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // 5. Paginate and render loading/error states
-  // ─────────────────────────────────────────────────────────────────────────────
   if (isConnecting || isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-black to-purple-950 text-white">
@@ -361,11 +336,9 @@ export default function Home() {
         }}
       />
 
-      {/* ─────────── Top Header with Logo + Menu ─────────── */}
       <header className="w-full bg-gray-900/80 backdrop-blur-md border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center h-16 justify-between">
-            {/* Left side: Logo */}
             <div className="flex items-center">
               <Image
                 src="/logo.png"
@@ -376,7 +349,6 @@ export default function Home() {
               />
             </div>
 
-            {/* Desktop nav */}
             <nav className="hidden md:flex space-x-6 ml-8">
               <button
                 disabled
@@ -408,10 +380,8 @@ export default function Home() {
               </button>
             </nav>
 
-            {/* Right side: empty spacer */}
             <div className="flex-1"></div>
 
-            {/* Mobile menu button */}
             <div className="md:hidden">
               <button
                 onClick={() => setMobileMenuOpen((prev) => !prev)}
@@ -430,7 +400,7 @@ export default function Home() {
                   </svg>
                 ) : (
                   <svg
-                    xmlns="http://www.w3.org/2000/svg"
+                    xmlns="http://www3.org/2000/svg"
                     className="h-6 w-6"
                     fill="none"
                     viewBox="0 0 24 24"
@@ -443,7 +413,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Mobile nav items */}
           {mobileMenuOpen && (
             <div className="md:hidden bg-gray-900/90">
               <nav className="flex flex-col space-y-2 py-2 px-4">
@@ -481,7 +450,6 @@ export default function Home() {
         </div>
       </header>
 
-      {/* ─────────── Enhanced Hero Section ─────────── */}
       <section className="relative flex items-center justify-center h-[70vh] bg-gradient-to-br from-purple-900 to-indigo-800 overflow-hidden">
         <div className="absolute -top-32 -left-32 w-72 h-72 bg-purple-700 rounded-full filter blur-3xl opacity-50 animate-pulse"></div>
         <div className="absolute -bottom-32 -right-32 w-72 h-72 bg-indigo-600 rounded-full filter blur-3xl opacity-50 animate-pulse"></div>
@@ -533,7 +501,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ─────────── Campaign Cards Section ─────────── */}
       <main className="flex-1 px-4 py-8 md:px-8 md:py-12">
         {error && (
           <div className="p-4 mb-6 bg-red-900/80 text-red-200 border border-red-500 rounded-lg text-center">

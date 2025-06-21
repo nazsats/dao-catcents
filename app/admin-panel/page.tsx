@@ -1,4 +1,3 @@
-// File: app/admin-panel/page.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
@@ -14,6 +13,7 @@ import {
   limit,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { getAuth } from 'firebase/auth';
 import { useAccount, useWriteContract, useReadContract } from 'wagmi';
 import { toast, Toaster } from 'react-hot-toast';
 import Image from 'next/image';
@@ -51,6 +51,7 @@ export default function AdminPage() {
   const { writeContract, isPending } = useWriteContract();
   const { open } = useAppKit();
   const router = useRouter();
+  const { isAuthenticated, isAuthenticating } = useFirebaseAuth();
 
   const { data: campaignCount, error: campaignCountError } = useReadContract({
     address: CONTRACT_ADDRESS as `0x${string}`,
@@ -85,8 +86,7 @@ export default function AdminPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-
-  useFirebaseAuth();
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     if (
@@ -130,7 +130,6 @@ export default function AdminPage() {
                 ? campData.date.toDate()
                 : new Date(campData.date || Date.now());
 
-            // Fetch likeCount from likes subcollection
             const likesCollection = collection(db, 'campaigns', campDoc.id, 'likes');
             const likesSnap = await getDocs(likesCollection);
             const likeCount = likesSnap.size;
@@ -147,7 +146,7 @@ export default function AdminPage() {
               abstainVotes: (campData.abstainVotes as number) || 0,
               contractProposalId: Number(campData.contractProposalId) || 0,
               commentCount: (campData.commentCount as number) || 0,
-              likeCount, // Added likeCount
+              likeCount,
               allowAbstain: (campData.allowAbstain as boolean) || false,
               status:
                 (campData.status as
@@ -280,379 +279,395 @@ export default function AdminPage() {
     }
   };
 
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (
-    !isConnected ||
-    !address ||
-    address.toLowerCase() !== ADMIN_ADDRESS.toLowerCase() ||
-    isPending
-  ) {
-    toast.error('Unauthorized or action pending.');
-    return;
-  }
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
 
-  if (!validateInputs()) return;
-
-  const pendingToast = toast.loading(
-    editingId ? 'Updating proposal...' : 'Creating proposal...'
-  );
-  try {
-    let imageUrl = form.image;
-    if (imageFile) {
-      console.log('Preparing to upload image:', {
-        name: imageFile.name,
-        size: imageFile.size,
-        type: imageFile.type,
-      });
-      const formData = new FormData();
-      formData.append('file', imageFile);
-      const response = await fetch('/api/upload-image', {
-        method: 'POST',
-        body: formData,
-      });
-      const responseData = await response.json();
-      console.log('Image upload response:', responseData);
-      if (!response.ok) {
-        const errorDetails = {
-          status: response.status,
-          statusText: response.statusText,
-          error: responseData.error || 'Unknown error',
-          details: responseData.details || 'No details provided',
-          code: responseData.code || 'Unknown',
-        };
-        console.error('Image upload failed:', errorDetails);
-        let errorMessage = `Image upload failed: ${errorDetails.error}`;
-        if (errorDetails.details) {
-          errorMessage += ` - ${errorDetails.details}`;
-        }
-        if (errorDetails.code === 'storage/unauthorized') {
-          errorMessage += ' (Please ensure you are authenticated)';
-        }
-        throw new Error(errorMessage);
-      }
-      imageUrl = responseData.imageUrl;
-      console.log('Image uploaded successfully:', imageUrl);
+    if (
+      !isConnected ||
+      !address ||
+      address.toLowerCase() !== ADMIN_ADDRESS.toLowerCase() ||
+      isPending ||
+      !isAuthenticated ||
+      !currentUser
+    ) {
+      toast.error(
+        !isAuthenticated
+          ? 'Please wait for authentication or reconnect your wallet.'
+          : 'Unauthorized or action pending.'
+      );
+      return;
     }
 
-    let durationSeconds: number;
-    if (form.endDate) {
-      const endMS = new Date(form.endDate).getTime();
-      if (endMS <= Date.now()) {
-        toast.error('End date must be in the future.');
-        toast.dismiss(pendingToast);
-        return;
+    if (!validateInputs()) return;
+
+    const pendingToast = toast.loading(
+      editingId ? 'Updating proposal...' : 'Creating proposal...'
+    );
+    setIsUploading(true);
+
+    try {
+      let imageUrl = form.image;
+      if (imageFile) {
+        console.log('Preparing to upload image:', {
+          name: imageFile.name,
+          size: imageFile.size,
+          type: imageFile.type,
+          userId: currentUser.uid,
+        });
+        const formData = new FormData();
+        formData.append('file', imageFile);
+        const response = await fetch('/api/upload-image', {
+          method: 'POST',
+          body: formData,
+        });
+        const responseData = await response.json();
+        console.log('Image upload response:', responseData);
+        if (!response.ok) {
+          const errorDetails = {
+            status: response.status,
+            statusText: response.statusText,
+            error: responseData.error || 'Unknown error',
+            details: responseData.details || 'No details provided',
+            code: responseData.code || 'unknown',
+          };
+          console.error('Image upload failed:', errorDetails);
+          throw new Error(JSON.stringify(errorDetails));
+        }
+        imageUrl = responseData.imageUrl;
+        console.log('Image uploaded successfully:', imageUrl);
       }
-      durationSeconds = Math.floor((endMS - Date.now()) / 1000);
-    } else {
-      durationSeconds = 7 * 24 * 60 * 60;
-    }
 
-    if (!editingId) {
-      await writeContract(
-        {
-          address: CONTRACT_ADDRESS as `0x${string}`,
-          abi: contractAbi,
-          functionName: 'createCampaign',
-          args: [form.title, BigInt(durationSeconds), form.allowAbstain],
-          chainId: monadTestnet.id,
-        },
-        {
-          onSuccess: async (txHash: `0x${string}`) => {
-            if (campaignCount !== undefined) {
-              try {
-                const newOnChainId = Number(campaignCount);
-                const newDocId = doc(collection(db, 'campaigns')).id;
-                const campaignDataObj = {
-                  author: address.toLowerCase(),
-                  title: form.title,
-                  content: form.description,
-                  image: imageUrl || '/campaigns/placeholder.png',
-                  date: Timestamp.fromDate(new Date()),
-                  yesVotes: 0,
-                  noVotes: 0,
-                  abstainVotes: 0,
-                  contractProposalId: newOnChainId,
-                  commentCount: 0,
-                  likeCount: 0,
-                  allowAbstain: form.allowAbstain,
-                  status: 'Live' as const,
-                  endDate: Timestamp.fromDate(
-                    new Date(Date.now() + durationSeconds * 1000)
-                  ),
-                  socialLinks: {
-                    twitter: form.twitter || '',
-                    discord: form.discord || '',
-                    website: form.website || '',
-                  },
-                  invalid: false,
-                  deleted: false,
-                };
-                await setDoc(doc(db, 'campaigns', newDocId), campaignDataObj);
+      let durationSeconds: number;
+      if (form.endDate) {
+        const endMS = new Date(form.endDate).getTime();
+        if (endMS <= Date.now()) {
+          toast.error('End date must be in the future.');
+          toast.dismiss(pendingToast);
+          setIsUploading(false);
+          return;
+        }
+        durationSeconds = Math.floor((endMS - Date.now()) / 1000);
+      } else {
+        durationSeconds = 7 * 24 * 60 * 60;
+      }
 
-                setCampaigns((prev: Campaign[]) => [
-                  {
-                    id: newDocId,
-                    author: campaignDataObj.author,
-                    title: campaignDataObj.title,
-                    content: campaignDataObj.content,
-                    date: new Date().toISOString(),
-                    image: campaignDataObj.image,
-                    yesVotes: campaignDataObj.yesVotes,
-                    noVotes: campaignDataObj.noVotes,
-                    abstainVotes: campaignDataObj.abstainVotes,
-                    contractProposalId: campaignDataObj.contractProposalId,
-                    commentCount: campaignDataObj.commentCount,
-                    likeCount: campaignDataObj.likeCount,
-                    allowAbstain: campaignDataObj.allowAbstain,
-                    status: campaignDataObj.status,
-                    endDate: campaignDataObj.endDate.toDate().toISOString(),
-                    socialLinks: campaignDataObj.socialLinks,
+      if (!editingId) {
+        await writeContract(
+          {
+            address: CONTRACT_ADDRESS as `0x${string}`,
+            abi: contractAbi,
+            functionName: 'createCampaign',
+            args: [form.title, BigInt(durationSeconds), form.allowAbstain],
+            chainId: monadTestnet.id,
+          },
+          {
+            onSuccess: async (txHash: `0x${string}`) => {
+              if (campaignCount !== undefined) {
+                try {
+                  const newOnChainId = Number(campaignCount);
+                  const newDocId = doc(collection(db, 'campaigns')).id;
+                  const campaignDataObj = {
+                    author: address.toLowerCase(),
+                    title: form.title,
+                    content: form.description,
+                    image: imageUrl || '/campaigns/placeholder.png',
+                    date: Timestamp.fromDate(new Date()),
+                    yesVotes: 0,
+                    noVotes: 0,
+                    abstainVotes: 0,
+                    contractProposalId: newOnChainId,
+                    commentCount: 0,
+                    likeCount: 0,
+                    allowAbstain: form.allowAbstain,
+                    status: 'Live' as const,
+                    endDate: Timestamp.fromDate(
+                      new Date(Date.now() + durationSeconds * 1000)
+                    ),
+                    socialLinks: {
+                      twitter: form.twitter || '',
+                      discord: form.discord || '',
+                      website: form.website || '',
+                    },
                     invalid: false,
                     deleted: false,
-                    likedByUser: false,
-                    votedByUser: null,
-                    isVotable: true,
-                  } as Campaign,
-                  ...prev,
-                ]);
+                  };
+                  await setDoc(doc(db, 'campaigns', newDocId), campaignDataObj);
 
-                setForm({
-                  title: '',
-                  description: '',
-                  image: '',
-                  allowAbstain: false,
-                  endDate: '',
-                  status: 'Created',
-                  twitter: '',
-                  discord: '',
-                  website: '',
-                });
-                setImageFile(null);
-
-                toast.dismiss(pendingToast);
-                toast.success(
-                  <div>
-                    Proposal created & set live!{' '}
-                    <a
-                      href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline text-cyan-400"
-                    >
-                      View on Monad Explorer
-                    </a>
-                  </div>,
-                  { duration: 5000 }
-                );
-              } catch (firestoreErr: unknown) {
-                console.error('Firestore write after createCampaign failed:', {
-                  error: firestoreErr,
-                  message: firestoreErr instanceof Error ? firestoreErr.message : String(firestoreErr),
-                });
-                toast.dismiss(pendingToast);
-                toast.error('Chain created the proposal but Firestore update failed.');
-              }
-            } else {
-              toast.dismiss(pendingToast);
-              toast.error('Chain created the proposal, but campaignCount is undefined.');
-            }
-          },
-          onError: (error: unknown) => {
-            toast.dismiss(pendingToast);
-            console.error('Error creating proposal:', {
-              error,
-              message: error instanceof Error ? error.message : String(error),
-            });
-            let errorMessage = 'Failed to create proposal.';
-            if (
-              error instanceof Error &&
-              error.message.includes('insufficient funds')
-            ) {
-              errorMessage =
-                'Insufficient MON balance. Please claim testnet tokens from the Monad faucet.';
-            } else if (
-              error instanceof Error &&
-              error.message.includes('Only admin can access')
-            ) {
-              errorMessage = 'Only the admin can create proposals.';
-            } else if (
-              error instanceof Error &&
-              error.message.includes('User rejected the request')
-            ) {
-              errorMessage = 'Transaction rejected by user.';
-            } else if (error instanceof Error) {
-              errorMessage = `Failed to create proposal: ${error.message}`;
-            }
-            toast.error(errorMessage, { duration: 5000 });
-          },
-        }
-      );
-    } else {
-      const statusEnum = {
-        Created: 0,
-        Active: 1,
-        Live: 2,
-        Approved: 3,
-        Ended: 4,
-      }[form.status];
-
-      await writeContract(
-        {
-          address: CONTRACT_ADDRESS as `0x${string}`,
-          abi: contractAbi,
-          functionName: 'updateCampaignStatus',
-          args: [
-            BigInt(
-              campaigns.find((c) => c.id === editingId)?.contractProposalId || 0
-            ),
-            BigInt(statusEnum),
-          ],
-          chainId: monadTestnet.id,
-        },
-        {
-          onSuccess: async (txHash: `0x${string}`) => {
-            const provider = new JsonRpcProvider(
-              monadTestnet.rpcUrls.default.http[0]
-            );
-            await provider.waitForTransaction(txHash);
-
-            const campaignRef = doc(db, 'campaigns', editingId!);
-            const old = campaigns.find((c) => c.id === editingId) as Campaign;
-            const updatedDataObj = {
-              author: address.toLowerCase(),
-              title: form.title,
-              content: form.description,
-              image: imageUrl || '/campaigns/placeholder.png',
-              date: Timestamp.fromDate(new Date()),
-              yesVotes: old.yesVotes,
-              noVotes: old.noVotes,
-              abstainVotes: old.abstainVotes,
-              contractProposalId: old.contractProposalId,
-              commentCount: old.commentCount,
-              likeCount: old.likeCount,
-              allowAbstain: form.allowAbstain,
-              status: form.status as Campaign['status'],
-              endDate: form.endDate
-                ? Timestamp.fromDate(new Date(form.endDate))
-                : Timestamp.fromDate(
-                    new Date(Date.now() + durationSeconds * 1000)
-                  ),
-              socialLinks: {
-                twitter: form.twitter || '',
-                discord: form.discord || '',
-                website: form.website || '',
-              },
-              invalid: false,
-              deleted: false,
-            };
-            await setDoc(campaignRef, updatedDataObj, { merge: true });
-
-            setCampaigns((prev: Campaign[]) =>
-              prev.map((c) =>
-                c.id === editingId
-                  ? {
-                      id: editingId!,
-                      author: updatedDataObj.author,
-                      title: updatedDataObj.title,
-                      content: updatedDataObj.content,
-                      image: updatedDataObj.image,
+                  setCampaigns((prev: Campaign[]) => [
+                    {
+                      id: newDocId,
+                      author: campaignDataObj.author,
+                      title: campaignDataObj.title,
+                      content: campaignDataObj.content,
                       date: new Date().toISOString(),
-                      yesVotes: old.yesVotes,
-                      noVotes: old.noVotes,
-                      abstainVotes: old.abstainVotes,
-                      contractProposalId: old.contractProposalId,
-                      commentCount: old.commentCount,
-                      likeCount: old.likeCount,
-                      allowAbstain: updatedDataObj.allowAbstain,
-                      status: updatedDataObj.status,
-                      endDate: updatedDataObj.endDate.toDate().toISOString(),
-                      socialLinks: updatedDataObj.socialLinks,
+                      image: campaignDataObj.image,
+                      yesVotes: campaignDataObj.yesVotes,
+                      noVotes: campaignDataObj.noVotes,
+                      abstainVotes: campaignDataObj.abstainVotes,
+                      contractProposalId: campaignDataObj.contractProposalId,
+                      commentCount: campaignDataObj.commentCount,
+                      likeCount: campaignDataObj.likeCount,
+                      allowAbstain: campaignDataObj.allowAbstain,
+                      status: campaignDataObj.status,
+                      endDate: campaignDataObj.endDate.toDate().toISOString(),
+                      socialLinks: campaignDataObj.socialLinks,
                       invalid: false,
                       deleted: false,
                       likedByUser: false,
                       votedByUser: null,
                       isVotable: true,
-                    } as Campaign
-                  : c
-              )
-            );
+                    } as Campaign,
+                    ...prev,
+                  ]);
 
-            setForm({
-              title: '',
-              description: '',
-              image: '',
-              allowAbstain: false,
-              endDate: '',
-              status: 'Created',
-              twitter: '',
-              discord: '',
-              website: '',
-            });
-            setImageFile(null);
-            setEditingId(null);
+                  setForm({
+                    title: '',
+                    description: '',
+                    image: '',
+                    allowAbstain: false,
+                    endDate: '',
+                    status: 'Created',
+                    twitter: '',
+                    discord: '',
+                    website: '',
+                  });
+                  setImageFile(null);
 
-            toast.dismiss(pendingToast);
-            toast.success(
-              <div>
-                Proposal updated!{' '}
-                <a
-                  href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline text-cyan-400"
-                >
-                  View on Monad Explorer
-                </a>
-              </div>,
-              { duration: 5000 }
-            );
+                  toast.dismiss(pendingToast);
+                  toast.success(
+                    <div>
+                      Proposal created & set live!{' '}
+                      <a
+                        href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline text-cyan-400"
+                      >
+                        View on Monad Explorer
+                      </a>
+                    </div>,
+                    { duration: 5000 }
+                  );
+                } catch (firestoreErr: unknown) {
+                  console.error('Firestore write after createCampaign failed:', {
+                    error: firestoreErr,
+                    message: firestoreErr instanceof Error ? firestoreErr.message : String(firestoreErr),
+                  });
+                  toast.dismiss(pendingToast);
+                  toast.error('Chain created the proposal but Firestore update failed.');
+                }
+              } else {
+                toast.dismiss(pendingToast);
+                toast.error('Chain created the proposal, but campaignCount is undefined.');
+              }
+            },
+            onError: (error: unknown) => {
+              toast.dismiss(pendingToast);
+              console.error('Error creating proposal:', {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+              });
+              let errorMessage = 'Failed to create proposal.';
+              if (
+                error instanceof Error &&
+                error.message.includes('insufficient funds')
+              ) {
+                errorMessage =
+                  'Insufficient MON balance. Please claim testnet tokens from the Monad faucet.';
+              } else if (
+                error instanceof Error &&
+                error.message.includes('Only admin can access')
+              ) {
+                errorMessage = 'Only the admin can create proposals.';
+              } else if (
+                error instanceof Error &&
+                error.message.includes('User rejected the request')
+              ) {
+                errorMessage = 'Transaction rejected by user.';
+              } else if (error instanceof Error) {
+                errorMessage = `Failed to create proposal: ${error.message}`;
+              }
+              toast.error(errorMessage, { duration: 5000 });
+            },
+          }
+        );
+      } else {
+        const statusEnum = {
+          Created: 0,
+          Active: 1,
+          Live: 2,
+          Approved: 3,
+          Ended: 4,
+        }[form.status];
+
+        await writeContract(
+          {
+            address: CONTRACT_ADDRESS as `0x${string}`,
+            abi: contractAbi,
+            functionName: 'updateCampaignStatus',
+            args: [
+              BigInt(
+                campaigns.find((c) => c.id === editingId)?.contractProposalId || 0
+              ),
+              BigInt(statusEnum),
+            ],
+            chainId: monadTestnet.id,
           },
-          onError: (error: unknown) => {
-            toast.dismiss(pendingToast);
-            console.error('Error updating proposal:', {
-              error,
-              message: error instanceof Error ? error.message : String(error),
-            });
-            let errorMessage = 'Failed to update proposal.';
-            if (
-              error instanceof Error &&
-              error.message.includes('insufficient funds')
-            ) {
-              errorMessage =
-                'Insufficient MON balance. Please claim testnet tokens from the Monad faucet.';
-            } else if (
-              error instanceof Error &&
-              error.message.includes('Only admin can access')
-            ) {
-              errorMessage = 'Only the admin can update proposals.';
-            } else if (
-              error instanceof Error &&
-              error.message.includes('User rejected the request')
-            ) {
-              errorMessage = 'Transaction rejected by user.';
-            } else if (error instanceof Error) {
-              errorMessage = `Failed to update proposal: ${error.message}`;
-            }
-            toast.error(errorMessage, { duration: 5000 });
-          },
-        }
+          {
+            onSuccess: async (txHash: `0x${string}`) => {
+              const provider = new JsonRpcProvider(
+                monadTestnet.rpcUrls.default.http[0]
+              );
+              await provider.waitForTransaction(txHash);
+
+              const campaignRef = doc(db, 'campaigns', editingId!);
+              const old = campaigns.find((c) => c.id === editingId) as Campaign;
+              const updatedDataObj = {
+                author: address.toLowerCase(),
+                title: form.title,
+                content: form.description,
+                image: imageUrl || '/campaigns/placeholder.png',
+                date: Timestamp.fromDate(new Date()),
+                yesVotes: old.yesVotes,
+                noVotes: old.noVotes,
+                abstainVotes: old.abstainVotes,
+                contractProposalId: old.contractProposalId,
+                commentCount: old.commentCount,
+                likeCount: old.likeCount,
+                allowAbstain: form.allowAbstain,
+                status: form.status as Campaign['status'],
+                endDate: form.endDate
+                  ? Timestamp.fromDate(new Date(form.endDate))
+                  : Timestamp.fromDate(
+                      new Date(Date.now() + durationSeconds * 1000)
+                    ),
+                socialLinks: {
+                  twitter: form.twitter || '',
+                  discord: form.discord || '',
+                  website: form.website || '',
+                },
+                invalid: false,
+                deleted: false,
+              };
+              await setDoc(campaignRef, updatedDataObj, { merge: true });
+
+              setCampaigns((prev: Campaign[]) =>
+                prev.map((c) =>
+                  c.id === editingId
+                    ? {
+                        id: editingId!,
+                        author: updatedDataObj.author,
+                        title: updatedDataObj.title,
+                        content: updatedDataObj.content,
+                        image: updatedDataObj.image,
+                        date: new Date().toISOString(),
+                        yesVotes: old.yesVotes,
+                        noVotes: old.noVotes,
+                        abstainVotes: old.abstainVotes,
+                        contractProposalId: old.contractProposalId,
+                        commentCount: old.commentCount,
+                        likeCount: old.likeCount,
+                        allowAbstain: updatedDataObj.allowAbstain,
+                        status: updatedDataObj.status,
+                        endDate: updatedDataObj.endDate.toDate().toISOString(),
+                        socialLinks: updatedDataObj.socialLinks,
+                        invalid: false,
+                        deleted: false,
+                        likedByUser: false,
+                        votedByUser: null,
+                        isVotable: true,
+                      } as Campaign
+                    : c
+                )
+              );
+
+              setForm({
+                title: '',
+                description: '',
+                image: '',
+                allowAbstain: false,
+                endDate: '',
+                status: 'Created',
+                twitter: '',
+                discord: '',
+                website: '',
+              });
+              setImageFile(null);
+              setEditingId(null);
+
+              toast.dismiss(pendingToast);
+              toast.success(
+                <div>
+                  Proposal updated!{' '}
+                  <a
+                    href={`${MONAD_EXPLORER_URL}/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline text-cyan-400"
+                  >
+                    View on Monad Explorer
+                  </a>
+                </div>,
+                { duration: 5000 }
+              );
+            },
+            onError: (error: unknown) => {
+              toast.dismiss(pendingToast);
+              console.error('Error updating proposal:', {
+                error,
+                message: error instanceof Error ? error.message : String(error),
+              });
+              let errorMessage = 'Failed to update proposal.';
+              if (
+                error instanceof Error &&
+                error.message.includes('insufficient funds')
+              ) {
+                errorMessage =
+                  'Insufficient MON balance. Please claim testnet tokens from the Monad faucet.';
+              } else if (
+                error instanceof Error &&
+                error.message.includes('Only admin can access')
+              ) {
+                errorMessage = 'Only the admin can update proposals.';
+              } else if (
+                error instanceof Error &&
+                error.message.includes('User rejected the request')
+              ) {
+                errorMessage = 'Transaction rejected by user.';
+              } else if (error instanceof Error) {
+                errorMessage = `Failed to update proposal: ${error.message}`;
+              }
+              toast.error(errorMessage, { duration: 5000 });
+            },
+          }
+        );
+      }
+    } catch (error: unknown) {
+      console.error('Error creating/updating proposal:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        details: error instanceof Error ? error.message : String(error),
+      });
+      let errMsg = 'Unknown error';
+      try {
+        const parsedError = JSON.parse(
+          error instanceof Error ? error.message : String(error)
+        );
+        errMsg = `${parsedError.error}: ${parsedError.details} (Code: ${parsedError.code})`;
+      } catch {
+        errMsg = error instanceof Error ? error.message : 'Unknown error';
+      }
+      toast.dismiss(pendingToast);
+      toast.error(
+        `Failed to ${editingId ? 'update' : 'create'} proposal: ${errMsg}`,
+        { duration: 5000 }
       );
+    } finally {
+      setIsUploading(false);
     }
-  } catch (error: unknown) {
-    console.error('Error creating/updating proposal:', {
-      error,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    const errMsg = error instanceof Error ? error.message : 'Unknown error';
-    toast.dismiss(pendingToast);
-    toast.error(
-      `Failed to ${editingId ? 'update' : 'create'} proposal: ${errMsg}`,
-      { duration: 5000 }
-    );
-  }
-};
+  };
 
   const handleSyncCampaigns = async () => {
     const pendingToast = toast.loading('Syncing proposals...');
@@ -840,7 +855,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                   accept="image/*"
                   onChange={handleImageChange}
                   className="w-full p-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
+                  disabled={isUploading}
                 />
+                {isUploading && (
+                  <p className="text-sm text-cyan-400 mt-2">Uploading image...</p>
+                )}
                 {form.image && (
                   <div className="mt-2 relative w-32 h-32">
                     <Image
@@ -942,13 +961,13 @@ const handleSubmit = async (e: React.FormEvent) => {
 
               <button
                 type="submit"
-                disabled={isPending}
-                aria-disabled={isPending}
+                disabled={isPending || isUploading || isAuthenticating || !isAuthenticated}
+                aria-disabled={isPending || isUploading || isAuthenticating || !isAuthenticated}
                 className={`w-full px-4 py-2 rounded-full text-sm font-semibold text-white bg-gradient-to-r ${
                   theme.colors.primary
                 } hover:bg-gradient-to-r hover:${theme.colors.secondary} disabled:bg-gray-600 disabled:cursor-not-allowed`}
               >
-                {editingId ? 'Update Proposal' : 'Create Proposal'}
+                {isUploading ? 'Uploading...' : editingId ? 'Update Proposal' : 'Create Proposal'}
               </button>
             </form>
           </div>

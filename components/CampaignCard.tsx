@@ -1,4 +1,3 @@
-// File: components/CampaignCard.tsx
 import Image from 'next/image';
 import Link from 'next/link';
 import { Campaign } from '@/lib/types';
@@ -12,10 +11,7 @@ interface CampaignCardProps {
   onLike: () => void;
 }
 
-export default function CampaignCard({
-  campaign,
-  onLike,
-}: CampaignCardProps) {
+export default function CampaignCard({ campaign, onLike }: CampaignCardProps) {
   const {
     id,
     title,
@@ -52,7 +48,10 @@ export default function CampaignCard({
           width={600}
           height={192}
           className="w-full h-40 sm:h-48 object-cover"
-          onError={(e) => (e.currentTarget.src = '/campaigns/placeholder.png')}
+          onError={(e) => {
+            console.error('Image load failed:', { src: image, title });
+            e.currentTarget.src = '/campaigns/placeholder.png';
+          }}
         />
       )}
       <div className="p-4 flex flex-col flex-grow">
